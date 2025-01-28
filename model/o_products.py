@@ -66,7 +66,7 @@ class OProducts:
                 
         return filtered_products
     
-    def get_products_telas(self):
+    def get_products_telas(self, item_name):
         # products = self.models.execute_kw(self.db, self.uid, self.password,
         #                                   'product.template', 'search_read',
         #                                   [[]],
@@ -82,13 +82,13 @@ class OProducts:
         filtered_blackout = []
         filtered_sheer = []
         rs = []
-
+        path_filter = 'CORTINAS/SHADES/TELAS/' + item_name
         for product in products:
             categ_ids = product['public_categ_ids']
             category_names = [category_paths[cid] for cid in categ_ids if cid in category_paths]
 
             for path in category_names:
-                if 'CORTINAS/SHADES/TELAS/BLACKOUT' in path:
+                if path_filter in path:
                     filtered_blackout.append({
                         'name': product['name'],
                         #'category': path,

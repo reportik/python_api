@@ -5,7 +5,7 @@ from pydantic import BaseModel
 #from ..auth import authenticate_user
 from model.o_products import OProducts
 
-def odoo_tela_items(path: str) -> list[str] :
+def odoo_tela_items(item_name: str) -> list[str] :
     # Ejemplo de uso
     url = ODOO_URL
     db = ODOO_DB
@@ -14,7 +14,7 @@ def odoo_tela_items(path: str) -> list[str] :
     password = ADMIN_PASS  
 
     oproducts = OProducts(url, db, username, password)
-    productos_filtrados = oproducts.get_products_telas()
+    productos_filtrados = oproducts.get_products_telas(item_name)
     return productos_filtrados
     #ProfileState.products = productos_filtrados
     
