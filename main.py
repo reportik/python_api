@@ -2,8 +2,8 @@ from fastapi import FastAPI, HTTPException
 import pyodbc
 from pydantic import BaseModel
 from ProfileState import odoo_tela_items
-from dotenv import load_dotenv
 import os
+from dotenv import load_dotenv
 
 # Cargar las variables de entorno desde .env
 load_dotenv()
@@ -42,8 +42,8 @@ def create_item(item: Item):
 
 # Configurar la conexión a SQL Server
 def get_db_connection():
-    return pyodbc.connect(           
-        f"DRIVER={{ {os.getenv('DB_DRIVER')} }};"
+    return pyodbc.connect(
+        f"DRIVER={{{os.getenv('DB_DRIVER')}}};"  # Nota: Sin espacios extra en las llaves
         f"SERVER={os.getenv('DB_SERVER')};"
         f"DATABASE={os.getenv('DB_DATABASE')};"
         f"UID={os.getenv('DB_USER')};"
@@ -53,6 +53,9 @@ def get_db_connection():
 @app.get("/get-image/{id}")
 async def get_image(id: int):
     # Conexión a la base de datos
+    if not os.getenv("DB_DRIVER"):
+        raise ValueError("No se encontró la variable DB_DRIVER en el archivo .env")
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT image FROM RPT_ODOO_CORTINAS WHERE Id = ?", (id))
