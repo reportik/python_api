@@ -48,6 +48,8 @@ def get_db_connection():
         f"DATABASE={os.getenv('DB_DATABASE')};"
         f"UID={os.getenv('DB_USER')};"
         f"PWD={os.getenv('DB_PASSWORD')};"
+        "Encrypt=yes;"  # Opcional para conexiones seguras
+        "TrustServerCertificate=yes;"  # Si es necesario para evitar errores de certificados
     )
 
 @app.get("/get-image/{id}")
