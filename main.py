@@ -54,30 +54,35 @@ def get_db_connection():
     )
 
 # Ruta para obtener el userName de un usuario logueado, recibiendo el id del usuario y la contraseña con POST
+
 @app.post("/auth/")
-async def get_user_name(user_id: str, password: str):
-    # colocar un try catch para manejar errores
+async def auth(user_id: str, password: str):
     try:
         url = os.getenv('ODOO_URL')
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')   
-        
+
         common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))    
         
         uid = common.authenticate(db, user_id, password, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
         admin_uid = common.authenticate(db, admin_username, admin_password, {})
-                            
+        if not admin_uid:
+            raise HTTPException(status_code=500, detail="Error al autenticar admin")
+
         models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
-        #email_normalized email                
-        #ids = models.execute_kw(db, uid, password, 'res.partner', 'search', [[['write_uid', '=', uid]]], { 'limit': 1})                                                                                    
         socios = models.execute_kw(db, admin_uid, admin_password, 'res.users', 'read', [uid], {})
-        
-        #print(socios[0])
-        temp_user = ""+socios[0]["name"]+""
-        return {"user_name": temp_user}
+
+        if not socios:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        return {"user_name": socios[0]["name"]}
+
     except Exception as e:
-        return {"user_name": "Error"}
+        raise HTTPException(status_code=500, detail=str(e))
                    
                    
 @app.get("/get-image/{id}")
