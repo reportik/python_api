@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from ProfileState import odoo_tela_items
 import os
 from dotenv import load_dotenv
+import xmlrpc.client
 
 # Cargar las variables de entorno desde .env
 load_dotenv()
@@ -52,9 +53,36 @@ def get_db_connection():
         "TrustServerCertificate=yes;"  # Si es necesario para evitar errores de certificados
     )
 
+# Ruta para obtener el userName de un usuario logueado, recibiendo el id del usuario y la contraseña con POST
+@app.post("/auth/")
+async def get_user_name(user_id: str, password: str):
+    # colocar un try catch para manejar errores
+    try:
+        url = os.getenv('ODOO_URL')
+        db = os.getenv('ODOO_DB')
+        admin_username = os.getenv('ADMIN_USER')
+        admin_password = os.getenv('ADMIN_PASS')   
+        
+        common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))    
+        
+        uid = common.authenticate(db, user_id, password, {})
+        admin_uid = common.authenticate(db, admin_username, admin_password, {})
+                            
+        models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
+        #email_normalized email                
+        #ids = models.execute_kw(db, uid, password, 'res.partner', 'search', [[['write_uid', '=', uid]]], { 'limit': 1})                                                                                    
+        socios = models.execute_kw(db, admin_uid, admin_password, 'res.users', 'read', [uid], {})
+        
+        #print(socios[0])
+        temp_user = ""+socios[0]["name"]+""
+        return {"user_name": temp_user}
+    except Exception as e:
+        return {"user_name": "Error"}
+                   
+                   
 @app.get("/get-image/{id}")
 async def get_image(id: int):
-    # Conexión a la base de datos
+
     if not os.getenv("DB_DRIVER"):
         raise ValueError("No se encontró la variable DB_DRIVER en el archivo .env")
 
