@@ -56,33 +56,63 @@ def get_db_connection():
 class AuthRequest(BaseModel):
     user_id: str
     password: str
+
 @app.post("/auth/")
 async def auth(data: AuthRequest):
     user_id = data.user_id
     password = data.password
+
     try:
+        # 🔹 Obtener variables de entorno
         url = os.getenv('ODOO_URL')
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
-        admin_password = os.getenv('ADMIN_PASS')   
+        admin_password = os.getenv('ADMIN_PASS')
 
-        common = xmlrpc.client.ServerProxy('{}/xmlrpc/2/common'.format(url))    
-        
+        # 🔹 Conectar con el servidor XML-RPC
+        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+
+        # 🔹 Autenticación del usuario normal
         uid = common.authenticate(db, user_id, password, {})
         if not uid:
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
+        # 🔹 Autenticación del usuario admin
         admin_uid = common.authenticate(db, admin_username, admin_password, {})
         if not admin_uid:
             raise HTTPException(status_code=500, detail="Error al autenticar admin")
 
-        models = xmlrpc.client.ServerProxy('{}/xmlrpc/2/object'.format(url))
-        socios = models.execute_kw(db, admin_uid, admin_password, 'res.users', 'read', [uid], {})
+        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
-        if not socios:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        # 🔹 Obtener el `partner_id` del usuario autenticado
+        user_data = models.execute_kw(
+            db, admin_uid, admin_password,
+            "res.users", "read",
+            [[uid]],  # Debe ser una lista de listas
+            {"fields": ["partner_id"]}
+        )
 
-        return {"user_name": socios[0]["name"]}
+        if not user_data or "partner_id" not in user_data[0]:
+            raise HTTPException(status_code=404, detail="No se encontró el partner del usuario")
+
+        partner_id = user_data[0]["partner_id"][0]  # Obtener el ID del partner
+
+        # 🔹 Obtener la información del cliente (partner)
+        cliente = models.execute_kw(
+            db, admin_uid, admin_password,
+            "res.partner", "read",
+            [[partner_id]],  # Aquí sí pasamos el ID del partner en una lista
+            {"fields": ["id", "name", "property_product_pricelist"]}
+        )
+
+        if not cliente:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+        return {
+            "id": cliente[0]["id"],
+            "name": cliente[0]["name"],
+            "price_list": cliente[0]["property_product_pricelist"]
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
