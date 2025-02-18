@@ -5,7 +5,6 @@ from ProfileState import odoo_tela_items
 import os
 from dotenv import load_dotenv
 import xmlrpc.client
-
 # Cargar las variables de entorno desde .env
 load_dotenv()
 
@@ -54,9 +53,13 @@ def get_db_connection():
     )
 
 # Ruta para obtener el userName de un usuario logueado, recibiendo el id del usuario y la contraseña con POST
-
+class AuthRequest(BaseModel):
+    user_id: str
+    password: str
 @app.post("/auth/")
-async def auth(user_id: str, password: str):
+async def auth(data: AuthRequest):
+    user_id = data.user_id
+    password = data.password
     try:
         url = os.getenv('ODOO_URL')
         db = os.getenv('ODOO_DB')
