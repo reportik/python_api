@@ -88,7 +88,7 @@ async def auth(data: AuthRequest):
         user_data = models.execute_kw(
             db, admin_uid, admin_password,
             "res.users", "read",
-            [[uid]],  # Debe ser una lista de listas
+            [[uid]],  
             {"fields": ["partner_id"]}
         )
 
@@ -134,3 +134,52 @@ async def get_image(id: int):
         return {"image": result[0]}
     else:
         raise HTTPException(status_code=404, detail="Item not found")
+
+@app.get("/product/{product_id}/price/{pricelist_id}")
+async def get_product_price(product_id: int, pricelist_id: int):
+    try:
+        # 🔹 Obtener variables de entorno
+        url = os.getenv('ODOO_URL')
+        db = os.getenv('ODOO_DB')
+        admin_username = os.getenv('ADMIN_USER')
+        admin_password = os.getenv('ADMIN_PASS')
+
+        # 🔹 Conectar con el servidor XML-RPC
+        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+        admin_uid = common.authenticate(db, admin_username, admin_password, {})
+
+        if not admin_uid:
+            raise HTTPException(status_code=500, detail="Error al autenticar admin")
+
+        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
+
+        # 🔹 Buscar producto en product.template
+        product_data = models.execute_kw(
+            db, admin_uid, admin_password,
+            "product.template", "search_read",
+            [[["id", "=", product_id]]],  # Filtrar por ID del producto
+            {"fields": ["id", "name", "list_price"]}
+        )
+
+        if not product_data:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+        # 🔹 Obtener el precio en la lista de precios con `compute_price`
+        pricelist_price = models.execute_kw(
+            db, admin_uid, admin_password,
+            "product.pricelist.item", "search_read",
+            [[["pricelist_id", "=", pricelist_id], ["product_tmpl_id", "=", product_id]]],
+            {"fields": ["fixed_price"]}
+        )
+
+        # Si no hay precio específico en la lista de precios, usar `list_price`
+        final_price = pricelist_price[0]["fixed_price"] if pricelist_price else product_data[0]["list_price"]
+
+        return {
+            "id": product_data[0]["id"],
+            "name": product_data[0]["name"],
+            "pricelist_price": final_price
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
