@@ -353,7 +353,7 @@ async def generate_quotation_pdf(order_id: int):
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
-        PDF_PATH = os.getenv("PDF_PATH", "C:\\xampp\\htdocs\\invtek_frontend\\public\\pdfs" if os.name == "nt" else "/var/www/html/laravel/public/pdfs")
+        PDF_PATH = os.getenv("PDF_PATH", "C:\\xampp\\htdocs\\invtek_frontend\\public\\pdfs" if os.name == "nt" else "/var/www/html/invtek_frontend/public/pdfs")
 
         session = requests.Session()
         session.headers.update({'Content-Type': 'application/json'})
