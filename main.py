@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 import xmlrpc.client
 # Cargar las variables de entorno desde .env
 load_dotenv()
+import base64
+import requests
 
 app = FastAPI()
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,7 +30,7 @@ class Item(BaseModel):
 # Ruta GET
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to FastAPI on port 8035!"}
+    return {"message": "Welcome to FastAPI on port 3036!"}
 
 @app.get("/item/{item_name}")
 def read_item(item_name: str):
@@ -117,7 +119,7 @@ async def auth(data: AuthRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
                    
-                   
+# Ruta para obtener la imagen de un producto en base64                   
 @app.get("/get-image/{id}")
 async def get_image(id: int):
 
@@ -135,6 +137,7 @@ async def get_image(id: int):
     else:
         raise HTTPException(status_code=404, detail="Item not found")
 
+# Ruta para obtener el precio de un producto en una lista de precios específica
 @app.get("/product/{product_id}/price/{pricelist_id}")
 async def get_product_price(product_id: int, pricelist_id: int):
     try:
@@ -153,10 +156,10 @@ async def get_product_price(product_id: int, pricelist_id: int):
 
         models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
-        # 🔹 Buscar producto en product.template
+        # 🔹 Buscar producto en product
         product_data = models.execute_kw(
             db, admin_uid, admin_password,
-            "product.template", "search_read",
+            "product.product", "search_read",
             [[["id", "=", product_id]]],  # Filtrar por ID del producto
             {"fields": ["id", "name", "list_price"]}
         )
@@ -183,3 +186,246 @@ async def get_product_price(product_id: int, pricelist_id: int):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Ruta para guardar todas las imágenes de la tabla RPT_ODOO_CORTINAS en disco
+@app.get("/save-all-images")
+async def get_all_images():
+    if not os.getenv("DB_DRIVER"):
+        raise ValueError("No se encontró la variable DB_DRIVER en el archivo .env")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT Id, image, Tipo FROM RPT_ODOO_CORTINAS")
+    results = cursor.fetchall()
+    conn.close()
+
+    if not results:
+        raise HTTPException(status_code=404, detail="No se encontraron imágenes")
+
+    for row in results:
+        id, image_base64, tipo = row  # Asegúrate de capturar los tres valores correctamente
+        save_image_to_disk(image_base64, id, tipo)  # Pasar 'tipo' a la función
+
+    return {"ok"}
+
+def save_image_to_disk(image_base64: str, id: int, tipo: str) -> str:
+    """ Guarda una imagen en base64 en disco y devuelve su nombre de archivo con el formato `img_{id}_{tipo}.png`. """
+    try:
+        image_bytes = base64.b64decode(image_base64)
+
+        # Normalizar el nombre del tipo (sin espacios ni caracteres especiales)
+        tipo_clean = tipo.lower().replace(" ", "_")
+
+        image_name = f"img_{id}_{tipo_clean}.png"
+        image_path = os.path.join("images", image_name)
+
+        os.makedirs("images", exist_ok=True)
+
+        with open(image_path, "wb") as image_file:
+            image_file.write(image_bytes)
+
+        return image_name
+    except Exception as e:
+        return f"Error guardando imagen {id}: {str(e)}"
+
+@app.get("/update_product_ids")
+async def update_odoo_product_ids():
+    try:
+        # 🔹 Conectar a Odoo
+        url = os.getenv('ODOO_URL')
+        db = os.getenv('ODOO_DB')
+        admin_username = os.getenv('ADMIN_USER')
+        admin_password = os.getenv('ADMIN_PASS')
+
+        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+        admin_uid = common.authenticate(db, admin_username, admin_password, {})
+
+        if not admin_uid:
+            raise HTTPException(status_code=500, detail="Error al autenticar en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
+
+        # 🔹 Conectar a la BD y obtener todas las telas
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT Id, Name FROM RPT_ODOO_CORTINAS")  
+        telas = cursor.fetchall()
+
+        if not telas:
+            return {"message": "No hay telas pendientes de actualización"}
+
+        productos_actualizados = []
+
+        for id_tela, nombre_tela in telas:
+            # 🔹 Buscar producto en Odoo por nombre
+            product_data = models.execute_kw(
+                db, admin_uid, admin_password,
+                "product.product", "search_read",
+                [[["name", "ilike", nombre_tela]]],  
+                {"fields": ["id", "name"]}
+            )
+
+            if not product_data:
+                productos_actualizados.append({"id": id_tela, "name": nombre_tela, "error": "Producto no encontrado"})
+                continue
+
+            product_id = product_data[0]["id"]
+
+            # 🔹 Actualizar la base de datos con el ID de Odoo
+            cursor.execute("UPDATE RPT_ODOO_CORTINAS SET Odoo_id = ? WHERE Id = ?", (product_id, id_tela))
+            conn.commit()
+
+            # productos_actualizados.append({
+            #     "id": id_tela,
+            #     "name": nombre_tela,
+            #     "odoo_id": product_id
+            # })
+
+        conn.close()
+        return {"updated_products": productos_actualizados}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.post("/create-quotation/")
+async def create_quotation(data: dict):
+    ODOO_URL = os.getenv("ODOO_URL")
+    ODOO_DB = os.getenv("ODOO_DB")
+    ODOO_USER = os.getenv("ADMIN_USER")
+    ODOO_PASS = os.getenv("ADMIN_PASS")
+    PDF_PATH = os.getenv("PDF_PATH", "C:\\xampp\\htdocs\\invtek_frontend\\public\\pdfs" if os.name == "nt" else "/var/www/html/laravel/public/pdfs")
+
+    try:
+        # 🔹 Conectar con Odoo XML-RPC
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        # 🔹 Crear cotización en Odoo
+        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+            "partner_id": data["partner_id"],
+            "pricelist_id": data["pricelist_id"],
+        }])
+
+        # 🔹 Agregar líneas de productos
+        for line in data["order_lines"]:
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                "order_id": order_id,
+                "product_id": line["product_id"],
+                "product_uom_qty": line["quantity"],
+                "price_unit": line["price_unit"],
+            }])
+
+        # 🔹 Obtener el PDF
+        session = requests.Session()
+        session.headers.update({'Content-Type': 'application/json'})
+
+        # 🔹 Autenticación para obtener cookie de sesión
+        login_payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "db": ODOO_DB,
+                "login": ODOO_USER,
+                "password": ODOO_PASS,
+            }
+        }
+        session.post(f"{ODOO_URL}/web/session/authenticate", json=login_payload)
+
+        # 🔹 Descargar el PDF
+        pdf_response = session.get(f"{ODOO_URL}/report/pdf/sale.report_saleorder/{order_id}")
+        if pdf_response.status_code == 200:
+            pdf_filename = f"Cotizacion_{order_id}.pdf"
+            pdf_filepath = os.path.join(PDF_PATH, pdf_filename)
+
+            # Guardar el PDF en la carpeta especificada
+            with open(pdf_filepath, "wb") as f:
+                f.write(pdf_response.content)
+
+            return {
+                "status": "success",
+                "message": "Cotización creada y PDF guardado",
+                "order_id": order_id,
+                "pdf_name": pdf_filename  # Ruta donde se guardó el PDF
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Error al generar el PDF")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cotiza")
+async def create_quotation2():
+    ODOO_URL = os.getenv("ODOO_URL")
+    ODOO_DB = os.getenv("ODOO_DB")
+    ODOO_USER = os.getenv("ADMIN_USER")
+    ODOO_PASS = os.getenv("ADMIN_PASS")
+    PDF_PATH = os.getenv("PDF_PATH", "C:\\xampp\\htdocs\\invtek_frontend\\public\\pdfs" if os.name == "nt" else "/var/www/html/laravel/public/pdfs")
+
+
+    # 🔹 Conectar con Odoo XML-RPC
+    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+    uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    if not uid:
+        raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+    # 🔹 Crear cotización en Odoo
+    order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+        "partner_id": 1,
+        "pricelist_id": 1,
+    }])
+
+    # 🔹 Agregar líneas de productos
+    #for line in data["order_lines"]:
+    # imprimir num de cotizacion
+    print(order_id)
+
+    models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+        "order_id": order_id,
+        "product_id": 6799,
+        "product_uom_qty": 1,
+        "price_unit": 300,
+    }])
+
+    # 🔹 Obtener el PDF
+    session = requests.Session()
+    session.headers.update({'Content-Type': 'application/json'})
+
+    # 🔹 Autenticación para obtener cookie de sesión
+    login_payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "db": ODOO_DB,
+            "login": ODOO_USER,
+            "password": ODOO_PASS,
+        }
+    }
+    session.post(f"{ODOO_URL}/web/session/authenticate", json=login_payload)
+
+    # 🔹 Descargar el PDF
+    pdf_response = session.get(f"{ODOO_URL}/report/pdf/sale.report_saleorder/{order_id}")
+    if pdf_response.status_code == 200:
+        pdf_filename = f"quotation_{order_id}.pdf"
+        pdf_filepath = os.path.join(PDF_PATH, pdf_filename)
+
+        # Guardar el PDF en la carpeta especificada
+        with open(pdf_filepath, "wb") as f:
+            f.write(pdf_response.content)
+
+        return {
+            "status": "success",
+            "message": "Cotización creada y PDF guardado",
+            "order_id": order_id,
+            "pdf_url": f"{PDF_PATH}/{pdf_filename}"  # Ruta donde se guardó el PDF
+        }
+    else:
+        raise HTTPException(status_code=500, detail="Error al generar el PDF "+order_id)
+
+   
