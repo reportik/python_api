@@ -36,12 +36,7 @@ def read_root():
 def read_item(item_name: str):
     # Aquí puedes usar el parámetro item_name que toma el valor de 'BLACKOUT'
     return odoo_tela_items(item_name)
-
-# Ruta POST
-@app.post("/items/")
-def create_item(item: Item):
-    return {"name": item.name, "price": item.price, "is_offer": item.is_offer}
-
+ 
 # Configurar la conexión a SQL Server
 def get_db_connection():
     return pyodbc.connect(
@@ -390,7 +385,90 @@ async def generate_quotation_pdf(order_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/create-contact/")
+async def create_contact(contact: dict):
+    try:
+        # 🔹 Variables de entorno
+        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
 
+        # 🔹 Conexión con Odoo
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        # 🔹 Verificar si ya existe un contacto con ese correo
+        existing = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, 'res.partner', 'search_read',
+            [[['email', '=', contact["email"]]]],
+            {'fields': ['id', 'name'], 'limit': 1}
+        )
+
+        if existing:
+            return {
+                "status": "exists",
+                "message": "El contacto ya existe",
+                "partner_id": existing[0]["id"]
+            }
+
+        # 🔹 Crear el nuevo contacto
+        partner_id = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, 'res.partner', 'create',
+            [{
+                'name': contact["name"],
+                'email': contact["email"],
+            }]
+        )
+
+        return {
+            "status": "created",
+            "message": "Contacto creado con éxito",
+            "partner_id": partner_id
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/products/active/sellable")
+async def get_active_sellable_products():
+    try:
+        # Obtener variables de entorno
+        url = os.getenv('ODOO_URL').replace("\\x3a", ":")
+        db = os.getenv('ODOO_DB')
+        admin_username = os.getenv('ADMIN_USER')
+        admin_password = os.getenv('ADMIN_PASS')
+
+        # Conectar con Odoo
+        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+        uid = common.authenticate(db, admin_username, admin_password, {})
+
+        if not uid:
+            raise HTTPException(status_code=500, detail="Error al autenticar admin")
+
+        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
+
+        # Buscar productos activos y vendibles
+        products = models.execute_kw(
+            db, uid, admin_password,
+            'product.product', 'search_read',
+            [[
+                ['active', '=', True],
+                ['sale_ok', '=', True],
+                ['categ_id', '=', 1]
+            ]],
+            {'fields': ['id', 'name', 'list_price']}
+        )
+
+        return products
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
    
