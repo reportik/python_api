@@ -460,9 +460,9 @@ async def get_active_sellable_products():
             [[
                 ['active', '=', True],
                 ['sale_ok', '=', True],
-                ['categ_id', '=', 1]
+                ['categ_id', '<>', 66],
             ]],
-            {'fields': ['id', 'name', 'list_price']}
+            {'fields': ['id', 'name', 'categ_id', 'list_price']}
         )
 
         return products
