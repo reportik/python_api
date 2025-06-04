@@ -282,7 +282,51 @@ async def update_odoo_product_ids():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
+@app.post("/create-quotation2/")
+async def create_quotation2(data: dict):
+    try:
+        # 🔹 Variables de entorno
+        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
 
+        # 🔹 Conectar con Odoo
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        # 🔹 Crear la cotización
+        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+            "partner_id": data["partner_id"],
+            "pricelist_id": data["pricelist_id"],
+        }])
+
+        if not order_id:
+            raise HTTPException(status_code=500, detail="Error al crear la cotización")
+
+        # 🔹 Crear líneas sin producto (solo descripción y precio)
+        for line in data["order_lines"]:
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                "order_id": order_id,
+                "name": line["description"],  # Descripción libre
+                "product_uom_qty": line["quantity"],
+                "price_unit": line["price_unit"],
+                "product_uom": line.get("uom_id", 1),  # Default: unidad (id=1)
+            }])
+
+        return {
+            "status": "success",
+            "message": "Cotización creada con éxito con líneas personalizadas",
+            "order_id": order_id
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
 @app.post("/create-quotation/")
 async def create_quotation(data: dict):
     try:
