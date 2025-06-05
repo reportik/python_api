@@ -560,15 +560,21 @@ async def register_user(data: RegisterData):
         )
 
         # 👤 Crear usuario en Odoo
+        # Para que el usuario sea "Portal" (cliente que puede cotizar y comprar), debe pertenecer al grupo Portal.
+        # El ID del grupo Portal suele ser 9, pero es mejor buscarlo dinámicamente.
+        portal_group = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "res.groups", "search",
+            [[["category_id.name", "=", "User types"], ["name", "=", "Portal"]]]
+        )
         user_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "res.users", "create",
             [{
-                "name": data.name,
-                "login": data.user_id,
-                "email": data.user_id,
-                "password": data.password,
-                "partner_id": partner_id,
-                "groups_id": [(6, 0, [])]  # Sin permisos especiales
+            "name": data.name,
+            "login": data.user_id,
+            "email": data.user_id,
+            "password": data.password,
+            "partner_id": partner_id,
+            "groups_id": [(6, 0, portal_group)]  # Asignar grupo Portal
             }]
         )
 
