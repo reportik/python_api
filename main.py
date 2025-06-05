@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 import pyodbc
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from ProfileState import odoo_tela_items
 import os
 from dotenv import load_dotenv
@@ -545,7 +545,7 @@ async def register_user(data: RegisterData):
             [[["email", "=", data.user_id]]],
             {"fields": ["id", "email"], "limit": 1}
         )
-
+        
         if existing_contacts:
             raise HTTPException(status_code=409, detail="El usuario ya existe")
 
