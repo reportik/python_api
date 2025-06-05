@@ -106,7 +106,8 @@ async def auth(data: AuthRequest):
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
         return {
-            "id": cliente[0]["id"],
+            "partner_id": cliente[0]["id"],
+            "user_id": uid,
             "name": cliente[0]["name"],
             "price_list": cliente[0]["property_product_pricelist"]
         }
@@ -316,6 +317,7 @@ async def create_quotation2(data: dict):
                 "product_uom_qty": line["quantity"],
                 "price_unit": line["price_unit"],
                 "product_uom": line.get("uom_id", 1),  # Default: unidad (id=1)
+                "product_uom_qty": 1,
             }])
 
         return {
@@ -454,6 +456,7 @@ async def create_contact(contact: dict):
         )
 
         if existing:
+            # return para el caso de contacto existente
             return {
                 "status": "exists",
                 "message": "El contacto ya existe",
@@ -469,6 +472,7 @@ async def create_contact(contact: dict):
             }]
         )
 
+        # return para el caso de nuevo registro
         return {
             "status": "created",
             "message": "Contacto creado con éxito",
@@ -514,5 +518,73 @@ async def get_active_sellable_products():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class RegisterData(BaseModel):
+    name: str
+    user_id: EmailStr
+    password: str
 
-   
+@app.post("/register")
+async def register_user(data: RegisterData):
+    try:
+        # 🔹 Configuración de conexión Odoo
+        ODOO_URL = os.getenv("ODOO_URL").replace("\\x3a", ":")
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
+
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        # 🔍 Verificar si el contacto ya existe por email
+        existing_contacts = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "res.partner", "search_read",
+            [[["email", "=", data.user_id]]],
+            {"fields": ["id", "email"], "limit": 1}
+        )
+
+        if existing_contacts:
+            raise HTTPException(status_code=409, detail="El usuario ya existe")
+
+        # 🧑 Crear contacto
+        partner_id = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "res.partner", "create",
+            [{
+                "name": data.name,
+                "email": data.user_id,
+                "customer_rank": 1  # Se marca como cliente
+            }]
+        )
+
+        # 👤 Crear usuario en Odoo
+        user_id = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "res.users", "create",
+            [{
+                "name": data.name,
+                "login": data.user_id,
+                "email": data.user_id,
+                "password": data.password,
+                "partner_id": partner_id,
+                "groups_id": [(6, 0, [])]  # Sin permisos especiales
+            }]
+        )
+
+        # Obtener info del partner
+        cliente = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "res.partner", "read",
+            [[partner_id]],
+            {"fields": ["id", "name", "property_product_pricelist"]}
+        )
+
+        return {
+            "partner_id": partner_id,
+            "user_id": user_id,
+            "name": cliente[0]["name"] if cliente else "",
+            "price_list": cliente[0]["property_product_pricelist"] if cliente else None
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
