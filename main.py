@@ -86,7 +86,7 @@ async def auth(data: AuthRequest):
             db, admin_uid, admin_password,
             "res.users", "read",
             [[uid]],  
-            {"fields": ["partner_id"]}
+           {"fields": ["partner_id"]}
         )
 
         if not user_data or "partner_id" not in user_data[0]:
@@ -99,17 +99,25 @@ async def auth(data: AuthRequest):
             db, admin_uid, admin_password,
             "res.partner", "read",
             [[partner_id]],  # Aquí sí pasamos el ID del partner en una lista
-            {"fields": ["id", "name", "property_product_pricelist"]}
+            {"fields": ["id", "name", "property_product_pricelist"]}  
         )
 
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        fields = models.execute_kw(
+            db, admin_uid, admin_password,
+            'res.partner', 'fields_get',
+            [],
+            {'attributes': ['string', 'type']}
+        )
+        return fields
 
         return {
             "partner_id": cliente[0]["id"],
             "user_id": uid,
             "name": cliente[0]["name"],
-            "price_list": cliente[0]["property_product_pricelist"]
+            "price_list": cliente[0]["property_product_pricelist"],
+            "config": cliente[0].get("x_studio_configuracin_cotizador", None)  # Usar get para evitar KeyError
         }
 
     except Exception as e:
