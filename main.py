@@ -99,18 +99,11 @@ async def auth(data: AuthRequest):
             db, admin_uid, admin_password,
             "res.partner", "read",
             [[partner_id]],  # Aquí sí pasamos el ID del partner en una lista
-            {"fields": ["id", "name", "property_product_pricelist"]}  
+            {"fields": ["id", "name", "property_product_pricelist", "x_studio_configuracin_cotizador"]}  
         )
 
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
-        fields = models.execute_kw(
-            db, admin_uid, admin_password,
-            'res.partner', 'fields_get',
-            [],
-            {'attributes': ['string', 'type']}
-        )
-        return fields
 
         return {
             "partner_id": cliente[0]["id"],
