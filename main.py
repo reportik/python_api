@@ -314,11 +314,12 @@ async def create_quotation2(data: dict):
         for line in data["order_lines"]:
             models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
                 "order_id": order_id,
+                "product_id": line["product_id"],
                 "name": line["description"],  # Descripción libre
                 "product_uom_qty": line["quantity"],
                 "price_unit": line["price_unit"],
                 "product_uom": line.get("uom_id", 1),  # Default: unidad (id=1)
-                "product_uom_qty": 1,
+
             }])
 
         return {
