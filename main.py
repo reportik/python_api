@@ -35,8 +35,55 @@ def read_root():
 @app.get("/item/{item_name}")
 def read_item(item_name: str):
     # Aquí puedes usar el parámetro item_name que toma el valor de 'BLACKOUT'
-    return odoo_tela_items(item_name)
- 
+    #return odoo_tela_items(item_name)
+    
+    #obtener datos de un item por su nombre de product.product y de product.template
+    try:
+        # Obtener variables de entorno
+        url = os.getenv('ODOO_URL').replace("\\x3a", ":")
+        db = os.getenv('ODOO_DB')
+        admin_username = os.getenv('ADMIN_USER')
+        admin_password = os.getenv('ADMIN_PASS')
+
+        # Conectar con el servidor XML-RPC
+        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+        uid = common.authenticate(db, admin_username, admin_password, {})
+
+        if not uid:
+            raise HTTPException(status_code=500, detail="Error al autenticar admin")
+
+        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
+
+        # Buscar el producto por nombre
+        product_data = models.execute_kw(
+            db, uid, admin_password,
+            "product.product", "search_read",
+            [[["name", "ilike", item_name]]],  # Usar ilike para búsqueda parcial
+            {"fields": ["id", "name", "list_price", "product_tmpl_id"]}
+        )
+
+        if not product_data:
+            raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+        product_id = product_data[0]["id"]
+        product_template_id = product_data[0]["product_tmpl_id"][0]  # Obtener el ID del template
+
+        # Obtener datos del template
+        template_data = models.execute_kw(
+            db, uid, admin_password,
+            "product.template", "read",
+            [product_template_id],
+            {"fields": ["id", "name", "list_price"]}
+        )
+
+        return {
+            "product": product_data[0],
+            "template": template_data[0]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 # Configurar la conexión a SQL Server
 def get_db_connection():
     return pyodbc.connect(
