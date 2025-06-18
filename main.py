@@ -302,11 +302,13 @@ async def create_quotation2(data: dict):
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
         # 🔹 Crear la cotización
-        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
-            "partner_id": data["partner_id"],
-            "pricelist_id": data["pricelist_id"],
-        }])
+        # order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+        #     "partner_id": data["partner_id"],
+        #     "pricelist_id": data["pricelist_id"],
+        # }])
 
+        #Update cotizacion
+        order_id = 101
         if not order_id:
             raise HTTPException(status_code=500, detail="Error al crear la cotización")
 
@@ -318,7 +320,7 @@ async def create_quotation2(data: dict):
                 "name": line["description"],  # Descripción libre
                 "product_uom_qty": line["quantity"],
                 "price_unit": line["price_unit"],
-                "product_uom": line.get("uom_id", 1),  # Default: unidad (id=1)
+                "product_uom": 1,  # Default: unidad (id=1)
 
             }])
 
