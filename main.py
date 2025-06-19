@@ -53,13 +53,13 @@ def read_item(item_name: str):
             raise HTTPException(status_code=500, detail="Error al autenticar admin")
 
         models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
-
+        #item_name = item_name.strip()  # Eliminar espacios extra al inicio y al final del nombre del producto
         # Buscar el producto por nombre
         product_data = models.execute_kw(
             db, uid, admin_password,
             "product.product", "search_read",
-            [[["name", "ilike", item_name]]],  # Usar ilike para búsqueda parcial
-            {"fields": ["id", "name", "list_price", "product_tmpl_id"]}
+            [[["name", "=", item_name]]],  
+            {"fields": ["id", "name", "list_price", "product_tmpl_id"], "limit": 1}
         )
 
         if not product_data:
@@ -331,8 +331,8 @@ async def update_odoo_product_ids():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.post("/create-quotation2/")
-async def create_quotation2(data: dict):
+@app.post("/create-quotation-1/")
+async def create_quotation_1(data: dict):
     try:
         # 🔹 Variables de entorno
         ODOO_URL = os.getenv("ODOO_URL")
@@ -348,29 +348,32 @@ async def create_quotation2(data: dict):
 
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
-        # 🔹 Crear la cotización
-        # order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
-        #     "partner_id": data["partner_id"],
-        #     "pricelist_id": data["pricelist_id"],
-        # }])
+        #🔹 Crear la cotización
+        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+            "partner_id": data["partner_id"],
+            "pricelist_id": data["pricelist_id"],
+        }])
 
-        #Update cotizacion
-        order_id = 101
         if not order_id:
             raise HTTPException(status_code=500, detail="Error al crear la cotización")
 
-        # 🔹 Crear líneas sin producto (solo descripción y precio)
+        # 🔹 Crear líneas 
         for line in data["order_lines"]:
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
-                "order_id": order_id,
-                "product_id": line["product_id"],
-                "name": line["description"],  # Descripción libre
-                "product_uom_qty": line["quantity"],
-                "price_unit": line["price_unit"],
-                "product_uom": 1,  # Default: unidad (id=1)
-
-            }])
-
+            if line.get("type") == "note":
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "name": line.get("description", ""),
+                    "display_type": "line_note"
+                }])
+            else:
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "product_id": line["product_id"],
+                    "name": line["description"],
+                    "product_uom_qty": line["quantity"],
+                    "price_unit": line["price_unit"],
+                    "product_uom": 1
+                }])
         return {
             "status": "success",
             "message": "Cotización creada con éxito con líneas personalizadas",
@@ -641,6 +644,69 @@ async def register_user(data: RegisterData):
             "user_id": user_id,
             "name": cliente[0]["name"] if cliente else "",
             "price_list": cliente[0]["property_product_pricelist"] if cliente else None
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/update-quotation-1/")
+async def update_quotation_1(data: dict):
+    """
+    Actualiza una cotización existente: elimina todas las líneas y agrega las nuevas líneas y comentario.
+    Espera: {
+        "order_id": int,
+        "order_lines": [ ... ],  # igual que en create_quotation_1
+    }
+    """
+    try:
+        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
+
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        order_id = data["order_id"]
+
+        # 1. Buscar todas las líneas actuales de la cotización
+        line_ids = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "sale.order.line", "search",
+            [[["order_id", "=", order_id]]]
+        )
+        # 2. Eliminar todas las líneas existentes
+        if line_ids:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "sale.order.line", "unlink",
+                [line_ids]
+            )
+
+        # 3. Crear nuevas líneas (igual que en create_quotation_1)
+        for line in data["order_lines"]:
+            if line.get("type") == "note":
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "name": line.get("description", ""),
+                    "display_type": "line_note"
+                }])
+            else:
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "product_id": line["product_id"],
+                    "name": line["description"],
+                    "product_uom_qty": line["quantity"],
+                    "price_unit": line["price_unit"],
+                    "product_uom": 1
+                }])
+
+        return {
+            "status": "success",
+            "message": "Cotización actualizada con éxito",
+            "order_id": order_id
         }
 
     except Exception as e:
