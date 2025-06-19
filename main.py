@@ -75,10 +75,21 @@ def read_item(item_name: str):
             [product_template_id],
             {"fields": ["id", "name", "list_price"]}
         )
+         #  Obtener el precio en la lista de precios con `compute_price`
+        pricelist_price = models.execute_kw(
+            db, uid, admin_password,
+            "product.pricelist.item", "search_read",
+            [[["pricelist_id", "=", 1], ["product_tmpl_id", "=", product_id]]],
+            {"fields": ["fixed_price"]}
+        )
+
+        # Si no hay precio específico en la lista de precios, usar `list_price`
+        final_price = pricelist_price[0]["fixed_price"] if pricelist_price else product_data[0]["list_price"]
 
         return {
             "product": product_data[0],
-            "template": template_data[0]
+            "template": template_data[0],
+            "price_list_1": final_price
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
