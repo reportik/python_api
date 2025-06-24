@@ -360,14 +360,14 @@ async def create_quotation_1(data: dict):
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
         #🔹 Crear la cotización
-        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
-            "partner_id": data["partner_id"],
-            "pricelist_id": data["pricelist_id"],
-        }])
+        # order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+        #     "partner_id": data["partner_id"],
+        #     "pricelist_id": data["pricelist_id"],
+        # }])
 
-        if not order_id:
-            raise HTTPException(status_code=500, detail="Error al crear la cotización")
-
+        # if not order_id:
+        #     raise HTTPException(status_code=500, detail="Error al crear la cotización")
+        order_id = 102
         # 🔹 Crear líneas 
         for line in data["order_lines"]:
             if line.get("type") == "note":
@@ -385,11 +385,14 @@ async def create_quotation_1(data: dict):
                     "price_unit": line["price_unit"],
                     "product_uom": 1
                 }])
-        # 🔹 Calcular totales
-        models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "action_confirm", [[order_id]])
-        order_data = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "read", [order_id], {
-            "fields": ["amount_untaxed", "amount_total", "amount_tax"]
-        })
+        # 🔹 Leer totales de una cotizacion
+        
+        order_data = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "sale.order", "search_read",
+            [[["id", "=", order_id]]],
+            {"fields": ["amount_untaxed", "amount_total", "amount_tax"]}
+        )
+        
         data["subtotal"] = order_data[0]["amount_untaxed"]
         data["total"] = order_data[0]["amount_total"]
         data["taxes"] = order_data[0]["amount_tax"]
