@@ -360,14 +360,14 @@ async def create_quotation_1(data: dict):
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
         #🔹 Crear la cotización
-        # order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
-        #     "partner_id": data["partner_id"],
-        #     "pricelist_id": data["pricelist_id"],
-        # }])
+        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+            "partner_id": data["partner_id"],
+            "pricelist_id": data["pricelist_id"],
+        }])
 
-        # if not order_id:
-        #     raise HTTPException(status_code=500, detail="Error al crear la cotización")
-        order_id = 102
+        if not order_id:
+            raise HTTPException(status_code=500, detail="Error al crear la cotización")
+        # order_id = 102 # Esto es un ejemplo, deberías usar el ID real de la cotización creada
         # 🔹 Crear líneas 
         for line in data["order_lines"]:
             if line.get("type") == "note":
