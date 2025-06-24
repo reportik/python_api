@@ -385,10 +385,22 @@ async def create_quotation_1(data: dict):
                     "price_unit": line["price_unit"],
                     "product_uom": 1
                 }])
+        # 🔹 Calcular totales
+        models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "action_confirm", [[order_id]])
+        order_data = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "read", [order_id], {
+            "fields": ["amount_untaxed", "amount_total", "amount_tax"]
+        })
+        data["subtotal"] = order_data[0]["amount_untaxed"]
+        data["total"] = order_data[0]["amount_total"]
+        data["taxes"] = order_data[0]["amount_tax"]
+        
         return {
             "status": "success",
             "message": "Cotización creada con éxito con líneas personalizadas",
-            "order_id": order_id
+            "order_id": order_id,
+            "subtotal": data.get("subtotal", 0),
+            "total": data.get("total", 0),
+            "taxes": data.get("taxes", 0)
         }
 
     except Exception as e:
