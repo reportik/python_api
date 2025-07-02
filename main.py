@@ -25,8 +25,63 @@ app.add_middleware(
 class Item(BaseModel):
     name: str
     price: float
+    product_id: int
     is_offer: bool = None
+class Product(BaseModel):
+    name: str
+    product_id: int
+    price: float
+    is_offer: bool = None
+#getOdooProductPrices endpoint
+#example data dict:
+#array:1 [▼ // app\Http\Controllers\dashboard\Analytics.php:129
+ # 0 => "7061"
+#]
+@app.post("/getOdooPrices")
+async def get_odoo_product_prices(data: dict):
+    #return 'hoal'
+    """
+    Recibe: {"ids": [id1, id2, ...]}
+    Devuelve: {id1: {"id": id1, "precio_unitario": precio}, ...}
+    """
+    try:
+        ids = data.get("ids", [])
+        
+        if not ids or not isinstance(ids, list):
+            raise HTTPException(status_code=400, detail="Debes enviar un array de ids en 'ids'.")
 
+        url = os.getenv('ODOO_URL').replace("\\x3a", ":")
+        db = os.getenv('ODOO_DB')
+        admin_username = os.getenv('ADMIN_USER')
+        admin_password = os.getenv('ADMIN_PASS')
+
+        common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+        uid = common.authenticate(db, admin_username, admin_password, {})
+        if not uid:
+            raise HTTPException(status_code=500, detail="Error al autenticar admin")
+
+        models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
+
+        # Buscar todos los productos de una sola vez
+        products = models.execute_kw(
+            db, uid, admin_password,
+            "product.product", "search_read",
+            [[["id", "in", ids]]],
+            {"fields": ["id", "list_price", "product_tmpl_id"]}
+        )
+        #return products
+        result = {}
+        for prod in products:
+            product_id = prod["id"]
+            precio_unitario = prod["list_price"]
+            result[product_id] = precio_unitario
+        # Si no se encontraron productos, devolver un error
+        if not result:
+            raise HTTPException(status_code=404, detail="No se encontraron productos con los IDs proporcionados")
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 # Ruta GET
 @app.get("/")
 def read_root():
@@ -363,6 +418,8 @@ async def create_quotation_1(data: dict):
         order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
             "partner_id": data["partner_id"],
             "pricelist_id": data["pricelist_id"],
+            "partner_invoice_id": data["partner_id"],  # ← Añade esto
+            "partner_shipping_id": data["partner_id"], # ← Y esto también
         }])
 
         if not order_id:
@@ -737,3 +794,6 @@ async def update_quotation_1(data: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+    
