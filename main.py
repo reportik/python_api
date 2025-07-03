@@ -397,8 +397,8 @@ async def update_odoo_product_ids():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.post("/create-quotation/")
-async def create_quotation_1(data: dict):
+@app.post("/create-quotation-main/")
+async def create_quotation_main(data: dict):
     try:
         # 🔹 Variables de entorno
         ODOO_URL = os.getenv("ODOO_URL")
@@ -466,8 +466,8 @@ async def create_quotation_1(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.post("/create-quotation-test/")
-async def create_quotation(data: dict):
+@app.post("/create-quotation-products/")
+async def create_quotation_products(data: dict):
     try:
         # 🔹 Variables de entorno
         ODOO_URL = os.getenv("ODOO_URL")
@@ -732,8 +732,8 @@ async def register_user(data: RegisterData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/update-quotation/")
-async def update_quotation_1(data: dict):
+@app.post("/update-quotation-main/")
+async def update_quotation_main(data: dict):
     """
     Actualiza una cotización existente: elimina todas las líneas y agrega las nuevas líneas y comentario.
     Espera: {
@@ -795,5 +795,73 @@ async def update_quotation_1(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/update-quotation-products/")
+async def update_quotation_products(data: dict):
+    """
+    Actualiza una cotización de productos: elimina todas las líneas y agrega las nuevas líneas de productos.
+    Espera: {
+        "order_id": int,
+        "order_lines": [ ... ]  # igual que en create_quotation_products
+    }
+    """
+    try:
+        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
 
-    
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        order_id = data["order_id"]
+
+        # 1. Buscar todas las líneas actuales de la cotización
+        line_ids = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "sale.order.line", "search",
+            [[["order_id", "=", order_id]]]
+        )
+        # 2. Eliminar todas las líneas existentes
+        if line_ids:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "sale.order.line", "unlink",
+                [line_ids]
+            )
+
+        # 3. Crear nuevas líneas de productos (igual que en create_quotation_products)
+        for line in data["order_lines"]:
+            product = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
+                [[["id", "=", line["product_id"]]]],
+                {"fields": ["id", "name", "uom_id"]}
+            )
+
+            if not product:
+                raise HTTPException(status_code=404, detail=f"Producto con ID {line['product_id']} no encontrado")
+
+            product_name = product[0]["name"]
+            product_uom = product[0]["uom_id"][0]
+
+            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                "order_id": order_id,
+                "product_id": line["product_id"],
+                "name": product_name,
+                "product_uom_qty": line["quantity"],
+                "product_uom": product_uom,
+                "price_unit": line["price_unit"],
+            }])
+
+        return {
+            "status": "success",
+            "message": "Cotización de productos actualizada con éxito",
+            "order_id": order_id
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
