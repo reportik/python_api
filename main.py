@@ -397,7 +397,7 @@ async def update_odoo_product_ids():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.post("/create-quotation-1/")
+@app.post("/create-quotation/")
 async def create_quotation_1(data: dict):
     try:
         # 🔹 Variables de entorno
@@ -466,7 +466,7 @@ async def create_quotation_1(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-@app.post("/create-quotation/")
+@app.post("/create-quotation-test/")
 async def create_quotation(data: dict):
     try:
         # 🔹 Variables de entorno
@@ -732,7 +732,7 @@ async def register_user(data: RegisterData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/update-quotation-1/")
+@app.post("/update-quotation/")
 async def update_quotation_1(data: dict):
     """
     Actualiza una cotización existente: elimina todas las líneas y agrega las nuevas líneas y comentario.
