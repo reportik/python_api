@@ -741,6 +741,7 @@ async def update_quotation_main(data: dict):
         "order_lines": [ ... ],  # igual que en create_quotation_1
     }
     """
+    
     try:
         ODOO_URL = os.getenv("ODOO_URL")
         ODOO_DB = os.getenv("ODOO_DB")
@@ -761,12 +762,14 @@ async def update_quotation_main(data: dict):
             ODOO_DB, uid, ODOO_PASS, "sale.order.line", "search",
             [[["order_id", "=", order_id]]]
         )
-        # 2. Eliminar todas las líneas existentes
+        return line_ids
+        # 2. Eliminar todas las líneas existentes (deben ir como lista simple, no lista anidada)
         if line_ids:
-            models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, "sale.order.line", "unlink",
-                [line_ids]
-            )
+            for lid in line_ids:
+                models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "sale.order.line", "unlink",
+                    [[lid]]
+                )
 
         # 3. Crear nuevas líneas (igual que en create_quotation_1)
         for line in data["order_lines"]:
@@ -824,12 +827,13 @@ async def update_quotation_products(data: dict):
             ODOO_DB, uid, ODOO_PASS, "sale.order.line", "search",
             [[["order_id", "=", order_id]]]
         )
-        # 2. Eliminar todas las líneas existentes
+        # 2. Eliminar todas las líneas existentes (deben ir como lista simple, no lista anidada)
         if line_ids:
-            models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, "sale.order.line", "unlink",
-                [line_ids]
-            )
+            for lid in line_ids:
+                models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "sale.order.line", "unlink",
+                    [[lid]]
+                )
 
         # 3. Crear nuevas líneas de productos (igual que en create_quotation_products)
         for line in data["order_lines"]:
