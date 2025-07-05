@@ -194,26 +194,28 @@ async def auth(data: AuthRequest):
 
         models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
-        #  Obtener el `partner_id` del usuario autenticado
+        #  Obtener el `partner_id` del usuario autenticado y la imagen
         user_data = models.execute_kw(
             db, admin_uid, admin_password,
             "res.users", "read",
             [[uid]],  
-           {"fields": ["partner_id"]}
+           {"fields": ["partner_id", "image_1920"]}
         )
 
         if not user_data or "partner_id" not in user_data[0]:
             raise HTTPException(status_code=404, detail="No se encontró el partner del usuario")
 
         partner_id = user_data[0]["partner_id"][0]  # Obtener el ID del partner
+       
 
         #  Obtener la información del cliente (partner)
         cliente = models.execute_kw(
             db, admin_uid, admin_password,
             "res.partner", "read",
             [[partner_id]],  # Aquí sí pasamos el ID del partner en una lista
-            {"fields": ["id", "name", "property_product_pricelist", "x_studio_configuracin_cotizador"]}  
+            {"fields": ["id", "name", "property_product_pricelist", "x_studio_configuracin_cotizador", "image_1920"]}  
         )
+        #return cliente
 
         if not cliente:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -223,7 +225,8 @@ async def auth(data: AuthRequest):
             "user_id": uid,
             "name": cliente[0]["name"],
             "price_list": cliente[0]["property_product_pricelist"],
-            "config": cliente[0].get("x_studio_configuracin_cotizador", None)  # Usar get para evitar KeyError
+            "config": cliente[0].get("x_studio_configuracin_cotizador", None),  # Usar get para evitar KeyError
+            "user_image": cliente[0].get("image_1920", None)  # Usar get para evitar KeyError
         }
 
     except Exception as e:
@@ -762,7 +765,6 @@ async def update_quotation_main(data: dict):
             ODOO_DB, uid, ODOO_PASS, "sale.order.line", "search",
             [[["order_id", "=", order_id]]]
         )
-        return line_ids
         # 2. Eliminar todas las líneas existentes (deben ir como lista simple, no lista anidada)
         if line_ids:
             for lid in line_ids:
