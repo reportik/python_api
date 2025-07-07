@@ -782,13 +782,20 @@ async def update_quotation_main(data: dict):
                     "display_type": "line_note"
                 }])
             else:
+                # Buscar el impuesto del 16% en Odoo (solo una vez)
+                tax_ids = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "account.tax", "search",
+                    [[["amount", "=", 16], ["type_tax_use", "in", ["sale", "all"]]]],
+                    {"limit": 1}
+                )
                 models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
                     "order_id": order_id,
                     "product_id": line["product_id"],
                     "name": line["description"],
                     "product_uom_qty": line["quantity"],
                     "price_unit": line["price_unit"],
-                    "product_uom": 1
+                    "product_uom": 1,
+                    "tax_id": [[6, 0, tax_ids]] if tax_ids else []
                 }])
 
         return {
