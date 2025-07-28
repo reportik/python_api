@@ -876,5 +876,91 @@ async def update_quotation_products(data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/products/by-category/")
+async def get_products_by_category(data: dict):
+    """
+    Recibe: {"path_filter": "CORTINAS/SHADES/TELAS/BLACKOUT"}
+    Devuelve: [{id, name, price, description}]
+    Además guarda la imagen en disco en la ruta definida en .env con el nombre del id del producto.
+    """
+    try:
+        # Configuración Odoo
+        ODOO_URL = os.getenv("ODOO_URL").replace("\\x3a", ":")
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
+        IMAGE_PATH = os.getenv("CATEG_IMAGE_PATH", "./images/")
+
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        # Obtener todas las categorías públicas
+        categories = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            'product.public.category', 'search_read',
+            [[]],
+            {'fields': ['id', 'name', 'parent_id']}
+        )
+        category_dict = {cat['id']: {'name': cat['name'], 'parent_id': cat['parent_id'][0] if cat['parent_id'] else None} for cat in categories}
+
+        def build_path(category_id):
+            path = []
+            while category_id:
+                category = category_dict[category_id]
+                path.insert(0, category['name'])
+                category_id = category['parent_id']
+            return '/'.join(path)
+
+        # Obtener productos
+        products = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS,
+            'product.template', 'search_read',
+            [[["website_published", "=", True]]],
+            {'fields': ['id', 'name', 'list_price', 'public_categ_ids', 'image_1920']}
+        )
+
+        path_filter = data.get("path_filter", "")
+        if not path_filter:
+            raise HTTPException(status_code=400, detail="Debes enviar el filtro en 'path_filter'.")
+
+        os.makedirs(IMAGE_PATH, exist_ok=True)
+        result = []
+
+        category_paths = {cat_id: build_path(cat_id) for cat_id in category_dict}
+
+        for product in products:
+            categ_ids = product['public_categ_ids']
+            category_names = [category_paths[cid] for cid in categ_ids if cid in category_paths]
+
+            # Filtrar por ruta de categoría
+            if not any(path_filter.split("/")[-1] == cn.split("/")[-1] for cn in category_names):
+                continue
+
+            image_name = f"{product['id']}.png"
+            image_path = os.path.join(IMAGE_PATH, image_name)
+
+            # Guardar imagen en disco solo si no existe
+            if product.get('image_1920'):
+                if not os.path.isfile(image_path):
+                    with open(image_path, "wb") as image_file:
+                        image_file.write(base64.b64decode(product['image_1920']))
+
+            result.append({
+                "id": product["id"],
+                "name": product["name"],
+                "price": product["list_price"],
+                "description": product.get("description_sale", ""),
+                "image_path": image_path if os.path.isfile(image_path) else None
+            })
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
