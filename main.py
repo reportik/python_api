@@ -880,11 +880,10 @@ async def update_quotation_products(data: dict):
 async def get_products_by_category(data: dict):
     """
     Recibe: {"path_filter": "CORTINAS/SHADES/TELAS/BLACKOUT"}
-    Devuelve: [{id, name, price, description}]
-    Además guarda la imagen en disco en la ruta definida en .env con el nombre del id del producto.
+    Devuelve: [{id, name, price}]
+    Guarda la imagen en disco solo si no existe.
     """
     try:
-        # Configuración Odoo
         ODOO_URL = os.getenv("ODOO_URL").replace("\\x3a", ":")
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
@@ -898,7 +897,11 @@ async def get_products_by_category(data: dict):
 
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
-        # Obtener todas las categorías públicas
+        path_filter = data.get("path_filter", "")
+        if not path_filter:
+            raise HTTPException(status_code=400, detail="Debes enviar el filtro en 'path_filter'.")
+
+        # Obtener todas las categorías públicas y buscar la que coincide con el path
         categories = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             'product.public.category', 'search_read',
@@ -915,46 +918,40 @@ async def get_products_by_category(data: dict):
                 category_id = category['parent_id']
             return '/'.join(path)
 
-        # Obtener productos
+        # Buscar el id de la categoría que coincide con el path_filter
+        category_paths = {cat_id: build_path(cat_id) for cat_id in category_dict}
+        category_id = None
+        for cid, path in category_paths.items():
+            if path_filter.split("/")[-1] == path.split("/")[-1]:
+                category_id = cid
+                break
+
+        if not category_id:
+            return []
+
+        # Buscar productos publicados en esa categoría
         products = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
             'product.template', 'search_read',
-            [[["website_published", "=", True]]],
-            {'fields': ['id', 'name', 'list_price', 'public_categ_ids', 'image_1920']}
+            [[["website_published", "=", True], ["public_categ_ids", "in", [category_id]]]],
+            {'fields': ['id', 'name', 'list_price', 'image_1920']}
         )
-
-        path_filter = data.get("path_filter", "")
-        if not path_filter:
-            raise HTTPException(status_code=400, detail="Debes enviar el filtro en 'path_filter'.")
 
         os.makedirs(IMAGE_PATH, exist_ok=True)
         result = []
 
-        category_paths = {cat_id: build_path(cat_id) for cat_id in category_dict}
-
         for product in products:
-            categ_ids = product['public_categ_ids']
-            category_names = [category_paths[cid] for cid in categ_ids if cid in category_paths]
-
-            # Filtrar por ruta de categoría
-            if not any(path_filter.split("/")[-1] == cn.split("/")[-1] for cn in category_names):
-                continue
-
             image_name = f"{product['id']}.png"
             image_path = os.path.join(IMAGE_PATH, image_name)
-
-            # Guardar imagen en disco solo si no existe
-            if product.get('image_1920'):
-                if not os.path.isfile(image_path):
-                    with open(image_path, "wb") as image_file:
-                        image_file.write(base64.b64decode(product['image_1920']))
+            # Guardar imagen solo si no existe
+            if product.get('image_1920') and not os.path.isfile(image_path):
+                with open(image_path, "wb") as image_file:
+                    image_file.write(base64.b64decode(product['image_1920']))
 
             result.append({
                 "id": product["id"],
                 "name": product["name"],
-                "price": product["list_price"],
-                "description": product.get("description_sale", ""),
-                "image_path": image_path if os.path.isfile(image_path) else None
+                "price": product["list_price"]
             })
 
         return result
