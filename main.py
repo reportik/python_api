@@ -622,17 +622,14 @@ async def create_contact(contact: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.get("/products/active/sellable")
 async def get_active_sellable_products():
     try:
-        # Obtener variables de entorno
         url = os.getenv('ODOO_URL').replace("\\x3a", ":")
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
 
-        # Conectar con Odoo
         common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
         uid = common.authenticate(db, admin_username, admin_password, {})
 
@@ -641,7 +638,7 @@ async def get_active_sellable_products():
 
         models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
-        # Buscar productos activos y vendibles
+        # Buscar productos activos y vendibles con display_name y product_variant_id
         products = models.execute_kw(
             db, uid, admin_password,
             'product.product', 'search_read',
@@ -649,15 +646,32 @@ async def get_active_sellable_products():
                 ['active', '=', True],
                 ['sale_ok', '=', True],
                 ['categ_id', '<>', 66],
+                ["name", "ilike", 'RIEL DE ALUMINIO A TECHO']
             ]],
-            {'fields': ['id', 'name', 'categ_id', 'list_price']}
+            {'fields': ['id', 'display_name', 'categ_id', 'list_price', 'product_variant_id']}
         )
 
-        return products
+        result = []
+        # Leer los valores de variante específicos de cada producto y cruzarlos con product_template_attribute_value_ids
+        for prod in products:
+            # Usar display_name directamente, ya que incluye default_code, name y variantes
+            display_name = prod.get('display_name', '')
+            variant_value_ids = prod.get("product_variant_id", [])
+            #variant_values_full = [variant_value_details[vid] for vid in variant_value_ids if vid in variant_value_details]
+            result.append({
+                "id": prod["id"],
+                "name": display_name,
+                "price": prod["list_price"],
+                "categ_id": prod["categ_id"],
+                "variant_values": variant_value_ids
+            })
+
+        # Agregar los diccionarios de mapeo al resultado general
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
 class RegisterData(BaseModel):
     name: str
     user_id: EmailStr
