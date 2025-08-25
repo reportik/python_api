@@ -646,7 +646,7 @@ async def get_active_sellable_products():
                 ['active', '=', True],
                 ['sale_ok', '=', True],
                 ['categ_id', '<>', 66],
-                ["name", "ilike", 'RIEL DE ALUMINIO A TECHO']
+                #["name", "ilike", 'RIEL DE ALUMINIO A TECHO']
             ]],
             {'fields': ['id', 'display_name', 'categ_id', 'list_price', 'product_variant_id']}
         )
