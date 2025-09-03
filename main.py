@@ -661,8 +661,8 @@ async def get_active_sellable_products():
             result.append({
                 "id": prod["id"],
                 "name": display_name,
-                "price": prod["lst_price"],
-                "list_price": prod["list_price"],
+                "price": prod["list_price"],
+                "list_price": prod["lst_price"],
                 "categ_id": prod["categ_id"],
                 "variant_values": variant_value_ids
             })
