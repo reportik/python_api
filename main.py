@@ -648,9 +648,9 @@ async def get_active_sellable_products():
                 ['categ_id', '<>', 66],
                 #["name", "ilike", 'RIEL DE ALUMINIO A TECHO']
             ]],
-            {'fields': ['id', 'display_name', 'categ_id', 'list_price', 'product_variant_id']}
+            {'fields': ['id', 'variant_seller_ids', 'product_template_variant_value_ids', 'standard_price', 'display_name', 'categ_id', 'list_price', 'product_variant_id', 'product_variant_ids', 'lst_price']}
         )
-
+        #return products
         result = []
         # Leer los valores de variante específicos de cada producto y cruzarlos con product_template_attribute_value_ids
         for prod in products:
@@ -661,7 +661,7 @@ async def get_active_sellable_products():
             result.append({
                 "id": prod["id"],
                 "name": display_name,
-                "price": prod["list_price"],
+                "price": prod["lst_price"],
                 "list_price": prod["list_price"],
                 "categ_id": prod["categ_id"],
                 "variant_values": variant_value_ids
