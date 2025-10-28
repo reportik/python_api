@@ -9,6 +9,7 @@ import xmlrpc.client
 load_dotenv()
 import base64
 import requests
+#uvicorn main:app --host 0.0.0.0 --port 3036
 
 app = FastAPI()
 from fastapi.middleware.cors import CORSMiddleware
@@ -937,13 +938,14 @@ async def get_products_by_category(data: dict):
         category_paths = {cat_id: build_path(cat_id) for cat_id in category_dict}
         category_id = None
         for cid, path in category_paths.items():
-            if path_filter.split("/")[-1] == path.split("/")[-1]:
+            if path_filter.strip() == path.strip():  # Comparación exacta del path completo
                 category_id = cid
                 break
 
         if not category_id:
             return []
-
+        # return both
+        #return {"0":category_paths , "1":category_id, "2":path_filter, "3":category_paths.get(category_id, "")}
         # Buscar productos publicados en esa categoría
         products = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS,
