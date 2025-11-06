@@ -908,6 +908,7 @@ async def get_products_by_category(data: dict):
 
         common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
         uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+
         if not uid:
             raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
 
@@ -951,8 +952,61 @@ async def get_products_by_category(data: dict):
             ODOO_DB, uid, ODOO_PASS,
             'product.template', 'search_read',
             [[["website_published", "=", True], ["public_categ_ids", "in", [category_id]]]],
-            {'fields': ['id', 'name', 'list_price', 'image_1920']}
+            {'fields': ['id', 'name', 'list_price', 'image_1920', 'attribute_line_ids']}
         )
+
+        # Obtener todos los attribute_line_ids, luego leer líneas, atributos y valores para mapear nombres
+        all_line_ids = []
+        for p in products:
+            all_line_ids.extend(p.get('attribute_line_ids', []))
+        all_line_ids = list(set(all_line_ids))
+
+        line_map = {}
+        attr_names = {}
+        value_names = {}
+
+        if all_line_ids:
+            lines = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                'product.template.attribute.line', 'read',
+                [all_line_ids],
+                {'fields': ['id', 'attribute_id', 'value_ids']}
+            )
+            # Recolectar ids de atributos y valores
+            attr_ids = set()
+            value_ids = set()
+            for line in lines:
+                line_map[line['id']] = line
+                if line.get('attribute_id'):
+                    # attribute_id puede venir como [id, name] o como id
+                    aid = line['attribute_id'][0] if isinstance(line['attribute_id'], (list, tuple)) else line['attribute_id']
+                    if aid:
+                        attr_ids.add(aid)
+                for vid in line.get('value_ids', []):
+                    value_ids.add(vid)
+
+            # Leer nombres de atributos
+            if attr_ids:
+                attrs = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS,
+                    'product.attribute', 'read',
+                    [list(attr_ids)],
+                    {'fields': ['id', 'name']}
+                )
+                for a in attrs:
+                    attr_names[a['id']] = a['name']
+
+            # Leer nombres de valores
+            if value_ids:
+                vals = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS,
+                    'product.attribute.value', 'read',
+                    [list(value_ids)],
+                    {'fields': ['id', 'name', 'attribute_id']}
+                )
+                for v in vals:
+                    # attribute_id puede venir como tupla
+                    value_names[v['id']] = {'name': v['name'], 'attribute_id': v.get('attribute_id')[0] if v.get('attribute_id') else None}
 
         os.makedirs(IMAGE_PATH, exist_ok=True)
         result = []
@@ -965,10 +1019,31 @@ async def get_products_by_category(data: dict):
                 with open(image_path, "wb") as image_file:
                     image_file.write(base64.b64decode(product['image_1920']))
 
+            # Construir lista de atributos para este template
+            attributes = []
+            for lid in product.get('attribute_line_ids', []):
+                line = line_map.get(lid)
+                if not line:
+                    continue
+                # obtener id y nombre del atributo
+                raw_attr = line.get('attribute_id')
+                attr_id = raw_attr[0] if isinstance(raw_attr, (list, tuple)) else raw_attr
+                attr_name = attr_names.get(attr_id, None)
+                values = []
+                for vid in line.get('value_ids', []):
+                    vinfo = value_names.get(vid, {})
+                    values.append({"id": vid, "name": vinfo.get('name')})
+                attributes.append({
+                    "attribute_id": attr_id,
+                    "attribute_name": attr_name,
+                    "values": values
+                })
+
             result.append({
                 "id": product["id"],
                 "name": product["name"],
-                "price": product["list_price"]
+                "price": product["list_price"],
+                "attributes": attributes
             })
 
         return result
