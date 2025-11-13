@@ -952,8 +952,28 @@ async def get_products_by_category(data: dict):
             ODOO_DB, uid, ODOO_PASS,
             'product.template', 'search_read',
             [[["website_published", "=", True], ["public_categ_ids", "in", [category_id]]]],
-            {'fields': ['id', 'name', 'list_price', 'image_1920', 'attribute_line_ids']}
+            {'fields': ['id', 'name', 'list_price', 'image_1920', 'attribute_line_ids', 'product_variant_ids']}
         )
+
+        # Obtener product.product (variantes) desde los templates
+        template_to_variants = {}
+        all_variant_ids = []
+        for p in products:
+            variant_ids = p.get('product_variant_ids', [])
+            template_to_variants[p['id']] = variant_ids
+            all_variant_ids.extend(variant_ids)
+
+        # Leer precios de variantes si existen
+        variant_prices = {}
+        if all_variant_ids:
+            variants = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS,
+                'product.product', 'read',
+                [all_variant_ids],
+                {'fields': ['id', 'list_price']}
+            )
+            for v in variants:
+                variant_prices[v['id']] = v.get('list_price', 0)
 
         # Obtener todos los attribute_line_ids, luego leer líneas, atributos y valores para mapear nombres
         all_line_ids = []
@@ -1025,7 +1045,6 @@ async def get_products_by_category(data: dict):
                 line = line_map.get(lid)
                 if not line:
                     continue
-                # obtener id y nombre del atributo
                 raw_attr = line.get('attribute_id')
                 attr_id = raw_attr[0] if isinstance(raw_attr, (list, tuple)) else raw_attr
                 attr_name = attr_names.get(attr_id, None)
@@ -1039,12 +1058,26 @@ async def get_products_by_category(data: dict):
                     "values": values
                 })
 
-            result.append({
-                "id": product["id"],
-                "name": product["name"],
-                "price": product["list_price"],
-                "attributes": attributes
-            })
+            # Obtener variantes y usar precio de variante si existe, sino usar template price
+            variant_ids = template_to_variants.get(product['id'], [])
+            for var_id in variant_ids:
+                result.append({
+                    "id": var_id,  # Usar product.product ID (variante)
+                    "template_id": product["id"],
+                    "name": product["name"],
+                    "price": variant_prices.get(var_id, product["list_price"]),
+                    "attributes": attributes
+                })
+
+            # Si no hay variantes, devolver el template como fallback
+            if not variant_ids:
+                result.append({
+                    "id": product["id"],
+                    "template_id": product["id"],
+                    "name": product["name"],
+                    "price": product["list_price"],
+                    "attributes": attributes
+                })
 
         return result
 
