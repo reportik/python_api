@@ -904,7 +904,7 @@ async def get_products_by_category(data: dict):
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
-        IMAGE_PATH = os.getenv("CATEG_IMAGE_PATH", "./images/")
+        IMAGE_PATH = os.getenv("CATEG_IMAGE_PATH", "./images/") # Ruta para guardar imágenes de productos = 
 
         common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
         uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
@@ -1032,12 +1032,7 @@ async def get_products_by_category(data: dict):
         result = []
 
         for product in products:
-            image_name = f"{product['id']}.png"
-            image_path = os.path.join(IMAGE_PATH, image_name)
-            # Guardar imagen solo si no existe
-            if product.get('image_1920') and not os.path.isfile(image_path):
-                with open(image_path, "wb") as image_file:
-                    image_file.write(base64.b64decode(product['image_1920']))
+            
 
             # Construir lista de atributos para este template
             attributes = []
@@ -1068,6 +1063,13 @@ async def get_products_by_category(data: dict):
                     "price": variant_prices.get(var_id, product["list_price"]),
                     "attributes": attributes
                 })
+                
+                # Guardar imagen con el ID de la variante
+                image_name = f"{var_id}.png"
+                image_path = os.path.join(IMAGE_PATH, image_name)
+                if product.get('image_1920') and not os.path.isfile(image_path):
+                    with open(image_path, "wb") as image_file:
+                        image_file.write(base64.b64decode(product['image_1920']))
 
             # Si no hay variantes, devolver el template como fallback
             if not variant_ids:
@@ -1078,6 +1080,13 @@ async def get_products_by_category(data: dict):
                     "price": product["list_price"],
                     "attributes": attributes
                 })
+                
+                # Guardar imagen con el ID del template
+                image_name = f"{product['id']}.png"
+                image_path = os.path.join(IMAGE_PATH, image_name)
+                if product.get('image_1920') and not os.path.isfile(image_path):
+                    with open(image_path, "wb") as image_file:
+                        image_file.write(base64.b64decode(product['image_1920']))
 
         return result
 
