@@ -275,27 +275,178 @@ async def get_product_price(product_id: int, pricelist_id: int):
             db, admin_uid, admin_password,
             "product.product", "search_read",
             [[["id", "=", product_id]]],  # Filtrar por ID del producto
-            {"fields": ["id", "name", "list_price"]}
+            {"fields": ["id", "name", "list_price", "product_tmpl_id", "standard_price"]}
         )
 
         if not product_data:
             raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-        #  Obtener el precio en la lista de precios con `compute_price`
-        pricelist_price = models.execute_kw(
+        #  Obtener el precio en la lista de precios: primero buscar reglas específicas del producto, luego del template
+        pricelist_item = models.execute_kw(
             db, admin_uid, admin_password,
             "product.pricelist.item", "search_read",
-            [[["pricelist_id", "=", pricelist_id], ["product_tmpl_id", "=", product_id]]],
-            {"fields": ["fixed_price"]}
+            [[
+                ["pricelist_id", "=", pricelist_id],
+                ["product_id", "=", product_id]
+            ]],
+            {"fields": ["fixed_price", "percent_price", "price_discount", "compute_price"], "limit": 1}
         )
 
-        # Si no hay precio específico en la lista de precios, usar `list_price`
-        final_price = pricelist_price[0]["fixed_price"] if pricelist_price else product_data[0]["list_price"]
+        # Si no existe una regla para el product.product, buscar por product.template
+        if not pricelist_item and product_data[0].get("product_tmpl_id"):
+            tmpl = product_data[0]["product_tmpl_id"]
+            tmpl_id = tmpl[0] if isinstance(tmpl, (list, tuple)) else tmpl
+            pricelist_item = models.execute_kw(
+                db, admin_uid, admin_password,
+                "product.pricelist.item", "search_read",
+                [[
+                    ["pricelist_id", "=", pricelist_id],
+                    ["product_tmpl_id", "=", tmpl_id]
+                ]],
+                {"fields": ["fixed_price", "percent_price", "price_discount", "compute_price"], "limit": 1}
+            )
+
+        # Calcular el precio usando reglas de negocio por lista de precios (Directos/Frecuente/Mayoreo)
+        # Leer coste (standard_price) para usar como Precio Compra
+        list_price = product_data[0].get("list_price", 0)
+        std_price = product_data[0].get("standard_price")
+        try:
+            std_price = float(std_price) if std_price is not None else None
+        except Exception:
+            std_price = None
+
+        base_used = None
+        # Directo = Precio Compra / 0.65 (pero no bajar por debajo del list_price)
+        if std_price is not None:
+            direct_from_cost = std_price / 0.65 if 0.65 != 0 else std_price
+            if direct_from_cost < list_price:
+                direct_price = list_price
+                base_used = "list_price"
+            else:
+                direct_price = direct_from_cost
+                base_used = "standard_price"
+        else:
+            # si no hay coste, usar list_price
+            direct_price = list_price
+            base_used = "list_price"
+
+        # Aplicar la fórmula según la lista de precios (IDs conocidos: 1=Directos, 2=Frecuente, 4=Mayoreo)
+        # Intentamos usar reglas definidas en product.pricelist.item si existen; si no, usamos defaults históricos.
+        item = pricelist_item[0] if pricelist_item else None
+
+        def _apply_pricelist_item_to_base(base, it):
+            # fixed_price > percent_price > price_discount
+            if it.get("fixed_price") is not None:
+                return it["fixed_price"], None
+            if it.get("percent_price") is not None:
+                pct = it.get("percent_price") or 0
+                return base * (1 - (pct / 100.0)), pct
+            if it.get("price_discount") is not None:
+                disc = it.get("price_discount") or 0
+                if disc > 1:
+                    pct = disc
+                    return base * (1 - (pct / 100.0)), pct
+                else:
+                    pct = disc * 100.0
+                    return base * (1 - float(disc)), pct
+            return None, None
+
+        applied_pct = None
+        applied_fixed = None
+
+        if pricelist_id in (1, 2, 4):
+            # defaults (si no hay regla definida en Odoo)
+            defaults = {1: 0.0, 2: 7.0, 4: 19.0}
+            if item:
+                applied, pct = _apply_pricelist_item_to_base(direct_price, item)
+                if applied is not None:
+                    final_price = round(applied, 2)
+                    applied_pct = pct
+                    if item.get("fixed_price") is not None:
+                        applied_fixed = item.get("fixed_price")
+                else:
+                    # compute_price fallback
+                    if item.get("compute_price") == "percentage" and item.get("percent_price") is not None:
+                        pct = item.get("percent_price") or 0
+                        final_price = round(direct_price * (1 - (pct/100.0)), 2)
+                        applied_pct = pct
+                    else:
+                        # fallback a defaults históricos
+                        final_price = round(direct_price * (1 - (defaults.get(pricelist_id, 0.0)/100.0)), 2)
+            else:
+                # no hay regla: aplicar defaults históricos
+                final_price = round(direct_price * (1 - (defaults.get(pricelist_id, 0.0)/100.0)), 2)
+        else:
+            # Fallback para otras listas: buscar reglas en product.pricelist.item y aplicar fixed/percent/discount como antes
+            pricelist_item = models.execute_kw(
+                db, admin_uid, admin_password,
+                "product.pricelist.item", "search_read",
+                [[
+                    ["pricelist_id", "=", pricelist_id],
+                    ["product_id", "=", product_id]
+                ]],
+                {"fields": ["fixed_price", "percent_price", "price_discount", "compute_price"], "limit": 1}
+            )
+
+            # Si no existe una regla para el product.product, buscar por product.template
+            if not pricelist_item and product_data[0].get("product_tmpl_id"):
+                tmpl = product_data[0]["product_tmpl_id"]
+                tmpl_id = tmpl[0] if isinstance(tmpl, (list, tuple)) else tmpl
+                pricelist_item = models.execute_kw(
+                    db, admin_uid, admin_password,
+                    "product.pricelist.item", "search_read",
+                    [["pricelist_id", "=", pricelist_id], ["product_tmpl_id", "=", tmpl_id]],
+                    {"fields": ["fixed_price", "percent_price", "price_discount", "compute_price"], "limit": 1}
+                )
+
+            final_price = product_data[0].get("list_price")
+            if pricelist_item:
+                it = pricelist_item[0]
+                # fixed price tiene prioridad
+                if it.get("fixed_price") is not None:
+                    final_price = it["fixed_price"]
+                    applied_fixed = it.get("fixed_price")
+                else:
+                    # percent_price se interpreta como porcentaje (ej. 10 => 10%)
+                    if it.get("percent_price") is not None:
+                        pct = it.get("percent_price") or 0
+                        final_price = product_data[0]["list_price"] * (1 - (pct / 100.0))
+                        applied_pct = pct
+                    # price_discount suele ser decimal (0.1 => 10%), pero si >1 lo interpretamos como porcentaje
+                    elif it.get("price_discount") is not None:
+                        disc = it.get("price_discount") or 0
+                        if disc > 1:
+                            final_price = product_data[0]["list_price"] * (1 - (disc / 100.0))
+                            applied_pct = disc
+                        else:
+                            final_price = product_data[0]["list_price"] * (1 - float(disc))
+                            applied_pct = float(disc) * 100.0
+                    # fallback si compute_price indica percentage pero no tenemos campos anteriores
+                    elif it.get("compute_price") == "percentage" and it.get("percent_price") is not None:
+                        pct = it.get("percent_price") or 0
+                        final_price = product_data[0]["list_price"] * (1 - (pct / 100.0))
+                        applied_pct = pct
+
+        # Asegurar valores de diagnóstico
+        if 'base_used' not in locals() or base_used is None:
+            base_used = "list_price"
+        if 'direct_price' not in locals():
+            direct_price = product_data[0].get("list_price", 0)
 
         return {
             "id": product_data[0]["id"],
             "name": product_data[0]["name"],
-            "pricelist_price": final_price
+            "pricelist_price": round(final_price, 2) if isinstance(final_price, (int, float)) else final_price,
+            "debug": {
+                "base_used": base_used,
+                "standard_price": std_price,
+                "list_price": list_price,
+                "direct_price_used": direct_price,
+                "pricelist_id": pricelist_id,
+                "applied_pricelist_item": True if (applied_fixed is not None or applied_pct is not None) else False,
+                "applied_pct": applied_pct,
+                "applied_fixed": applied_fixed
+            }
         }
 
     except Exception as e:
