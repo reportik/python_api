@@ -68,14 +68,23 @@ async def get_odoo_product_prices(data: dict):
             db, uid, admin_password,
             "product.product", "search_read",
             [[["id", "in", ids]]],
-            {"fields": ["id", "list_price", "product_tmpl_id"]}
+            {"fields": ["id", "name", "list_price", "product_tmpl_id", "standard_price"]}
         )
         #return products
+        pricelist_id = data.get("pricelist_id")
         result = {}
         for prod in products:
             product_id = prod["id"]
-            precio_unitario = prod["list_price"]
-            result[product_id] = precio_unitario
+            if pricelist_id is None:
+                precio_unitario = prod.get("list_price")
+                result[product_id] = {"id": product_id, "price": precio_unitario, "name": prod.get("name")}
+            else:
+                final_price, debug = compute_pricelist_price(models, db, uid, admin_password, prod, pricelist_id)
+                if final_price is None:
+                    result[product_id] = {"id": product_id, "price": None, "error": debug.get("error"), "debug": debug}
+                else:
+                    result[product_id] = {"id": product_id, "price": round(final_price, 2), "name": prod.get("name"), "debug": debug}
+
         # Si no se encontraron productos, devolver un error
         if not result:
             raise HTTPException(status_code=404, detail="No se encontraron productos con los IDs proporcionados")
