@@ -5,6 +5,8 @@ from ProfileState import odoo_tela_items
 import os
 from dotenv import load_dotenv
 import xmlrpc.client
+from datetime import datetime, timedelta
+import jwt
 # Cargar las variables de entorno desde .env
 load_dotenv()
 import base64
@@ -43,6 +45,10 @@ async def get_odoo_product_prices(data: dict):
     #return 'hoal'
     """
     Recibe: {"ids": [id1, id2, ...]}
+    Ejemplo de data en json:
+    {
+      "ids": [7061, 3555]
+    }
     Devuelve: {id1: {"id": id1, "precio_unitario": precio}, ...}
     """
     try:
@@ -363,7 +369,60 @@ async def auth(data: AuthRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-                   
+
+
+# --- SSO Autologin a Odoo (token JWT temporal) ---
+AUTOLOGIN_ALGORITHM = "HS256"
+AUTOLOGIN_EXP_MINUTES = 2
+
+
+def _get_autologin_secret():
+    secret = os.getenv("AUTOLOGIN_SECRET")
+    if not secret:
+        raise HTTPException(
+            status_code=500,
+            detail="AUTOLOGIN_SECRET no configurado en el servidor",
+        )
+    return secret
+
+
+def generar_token_autologin(login: str) -> str:
+    """Genera un JWT de corta duración para autologin en Odoo (sin contraseña)."""
+    secret = _get_autologin_secret()
+    payload = {
+        "login": login,
+        "exp": datetime.utcnow() + timedelta(minutes=AUTOLOGIN_EXP_MINUTES),
+    }
+    return jwt.encode(payload, secret, algorithm=AUTOLOGIN_ALGORITHM)
+
+
+class AutologinTokenRequest(BaseModel):
+    """Solo para uso interno desde Laravel."""
+    login: str
+
+
+@app.post("/autologin-token")
+async def autologin_token(data: AutologinTokenRequest):
+    """
+    Genera un token JWT para redirigir al usuario a Odoo sin volver a iniciar sesión.
+    Laravel llama a este endpoint con el login (email) del usuario.
+    """
+    odoo_base_url = (os.getenv("ODOO_BASE_URL") or "").rstrip("/")
+    if not odoo_base_url:
+        raise HTTPException(
+            status_code=500,
+            detail="ODOO_BASE_URL no configurado en .env (URL pública de Odoo)",
+        )
+
+    token = generar_token_autologin(data.login)
+    autologin_url = f"{odoo_base_url}/autologin?token={token}"
+    return {
+        "token": token,
+        "autologin_url": autologin_url,
+        "expires_minutes": AUTOLOGIN_EXP_MINUTES,
+    }
+
+
 # Ruta para obtener la imagen de un producto en base64                   
 @app.get("/get-image/{id}")
 async def get_image(id: int):
@@ -1219,6 +1278,3 @@ async def get_products_by_category(data: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-
