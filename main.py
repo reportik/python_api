@@ -42,14 +42,11 @@ class Product(BaseModel):
 #]
 @app.post("/getOdooPrices")
 async def get_odoo_product_prices(data: dict):
-    #return 'hoal'
     """
-    Recibe: {"ids": [id1, id2, ...]}
-    Ejemplo de data en json:
-    {
-      "ids": [7061, 3555]
-    }
-    Devuelve: {id1: {"id": id1, "precio_unitario": precio}, ...}
+    Recibe: {"ids": [id1, id2, ...], "partner_id": 123}
+    - partner_id: ID del partner en Odoo, se usa para obtener su lista de precios actual
+    - pricelist_id: (fallback) Si no se envía partner_id, se usa este valor directo
+    Devuelve: {id1: {"id": id1, "price": precio, ...}, ...}
     """
     try:
         ids = data.get("ids", [])
@@ -69,6 +66,27 @@ async def get_odoo_product_prices(data: dict):
 
         models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
+        # Resolver pricelist_id: prioridad a partner_id (consulta en vivo desde Odoo)
+        pricelist_id = None
+        partner_id = data.get("partner_id")
+        if partner_id is not None:
+            partner_id = int(partner_id)
+            partner_data = models.execute_kw(
+                db, uid, admin_password,
+                "res.partner", "read",
+                [[partner_id]],
+                {"fields": ["property_product_pricelist"]}
+            )
+            if partner_data and partner_data[0].get("property_product_pricelist"):
+                ppl = partner_data[0]["property_product_pricelist"]
+                pricelist_id = ppl[0] if isinstance(ppl, (list, tuple)) else int(ppl)
+        
+        # Fallback: usar pricelist_id directo si no se pudo resolver desde partner
+        if pricelist_id is None:
+            raw_pricelist = data.get("pricelist_id")
+            if raw_pricelist is not None:
+                pricelist_id = int(raw_pricelist)
+
         # Buscar todos los productos de una sola vez
         products = models.execute_kw(
             db, uid, admin_password,
@@ -76,8 +94,7 @@ async def get_odoo_product_prices(data: dict):
             [[["id", "in", ids]]],
             {"fields": ["id", "name", "list_price", "product_tmpl_id", "standard_price"]}
         )
-        #return products
-        pricelist_id = data.get("pricelist_id")
+        
         result = {}
         for prod in products:
             product_id = prod["id"]
@@ -91,7 +108,6 @@ async def get_odoo_product_prices(data: dict):
                 else:
                     result[product_id] = {"id": product_id, "price": round(final_price, 2), "name": prod.get("name"), "debug": debug}
 
-        # Si no se encontraron productos, devolver un error
         if not result:
             raise HTTPException(status_code=404, detail="No se encontraron productos con los IDs proporcionados")
         return result
