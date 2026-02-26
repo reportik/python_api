@@ -50,7 +50,7 @@ async def get_odoo_product_prices(data: dict):
     """
     try:
         ids = data.get("ids", [])
-        
+
         if not ids or not isinstance(ids, list):
             raise HTTPException(status_code=400, detail="Debes enviar un array de ids en 'ids'.")
 
@@ -80,7 +80,7 @@ async def get_odoo_product_prices(data: dict):
             if partner_data and partner_data[0].get("property_product_pricelist"):
                 ppl = partner_data[0]["property_product_pricelist"]
                 pricelist_id = ppl[0] if isinstance(ppl, (list, tuple)) else int(ppl)
-        
+
         # Fallback: usar pricelist_id directo si no se pudo resolver desde partner
         if pricelist_id is None:
             raw_pricelist = data.get("pricelist_id")
@@ -94,7 +94,7 @@ async def get_odoo_product_prices(data: dict):
             [[["id", "in", ids]]],
             {"fields": ["id", "name", "list_price", "product_tmpl_id", "standard_price"]}
         )
-        
+
         result = {}
         for prod in products:
             product_id = prod["id"]
@@ -123,7 +123,7 @@ def read_root():
 def read_item(item_name: str):
     # Aquí puedes usar el parámetro item_name que toma el valor de 'BLACKOUT'
     #return odoo_tela_items(item_name)
-    
+
     #obtener datos de un item por su nombre de product.product y de product.template
     try:
         # Obtener variables de entorno
@@ -145,7 +145,7 @@ def read_item(item_name: str):
         product_data = models.execute_kw(
             db, uid, admin_password,
             "product.product", "search_read",
-            [[["name", "=", item_name]]],  
+            [[["name", "=", item_name]]],
             {"fields": ["id", "name", "list_price", "product_tmpl_id"], "limit": 1}
         )
 
@@ -180,7 +180,7 @@ def read_item(item_name: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 
 # Configurar la conexión a SQL Server
 def get_db_connection():
@@ -352,7 +352,7 @@ async def auth(data: AuthRequest):
         user_data = models.execute_kw(
             db, admin_uid, admin_password,
             "res.users", "read",
-            [[uid]],  
+            [[uid]],
            {"fields": ["partner_id", "image_1920"]}
         )
 
@@ -360,14 +360,14 @@ async def auth(data: AuthRequest):
             raise HTTPException(status_code=404, detail="No se encontró el partner del usuario")
 
         partner_id = user_data[0]["partner_id"][0]  # Obtener el ID del partner
-       
+
 
         #  Obtener la información del cliente (partner)
         cliente = models.execute_kw(
             db, admin_uid, admin_password,
             "res.partner", "read",
             [[partner_id]],  # Aquí sí pasamos el ID del partner en una lista
-            {"fields": ["id", "name", "property_product_pricelist", "x_studio_configuracin_cotizador", "image_1920"]}  
+            {"fields": ["id", "name", "property_product_pricelist", "x_studio_configuracin_cotizador", "image_1920"]}
         )
         #return cliente
 
@@ -439,7 +439,30 @@ async def autologin_token(data: AutologinTokenRequest):
     }
 
 
-# Ruta para obtener la imagen de un producto en base64                   
+class ValidateTokenRequest(BaseModel):
+    token: str
+
+
+@app.post("/validate-autologin-token")
+async def validate_autologin_token(data: ValidateTokenRequest):
+    """
+    Valida un JWT de autologin (generado por Odoo o FastAPI).
+    Usado por Laravel cuando recibe un token desde Odoo → Laravel.
+    """
+    secret = _get_autologin_secret()
+    try:
+        payload = jwt.decode(data.token, secret, algorithms=[AUTOLOGIN_ALGORITHM])
+        login = payload.get("login")
+        if not login:
+            raise HTTPException(status_code=400, detail="Token sin campo login")
+        return {"login": login, "valid": True}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+
+# Ruta para obtener la imagen de un producto en base64
 @app.get("/get-image/{id}")
 async def get_image(id: int):
 
@@ -564,7 +587,7 @@ async def update_odoo_product_ids():
         #  Conectar a la BD y obtener todas las telas
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT Id, Name FROM RPT_ODOO_CORTINAS")  
+        cursor.execute("SELECT Id, Name FROM RPT_ODOO_CORTINAS")
         telas = cursor.fetchall()
 
         if not telas:
@@ -577,7 +600,7 @@ async def update_odoo_product_ids():
             product_data = models.execute_kw(
                 db, admin_uid, admin_password,
                 "product.product", "search_read",
-                [[["name", "ilike", nombre_tela]]],  
+                [[["name", "ilike", nombre_tela]]],
                 {"fields": ["id", "name"]}
             )
 
@@ -602,7 +625,7 @@ async def update_odoo_product_ids():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.post("/create-quotation-main/")
 async def create_quotation_main(data: dict):
     try:
@@ -620,46 +643,63 @@ async def create_quotation_main(data: dict):
 
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
+        # Valores seguros para evitar enviar None por XML-RPC
+        partner_id = int(data.get("partner_id") or 1)
+        pricelist_id = int(data.get("pricelist_id") or 1)
+
         #🔹 Crear la cotización
         order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
-            "partner_id": data["partner_id"],
-            "pricelist_id": data["pricelist_id"],
-            "partner_invoice_id": data["partner_id"],  # ← Añade esto
-            "partner_shipping_id": data["partner_id"], # ← Y esto también
+            "partner_id": partner_id,
+            "pricelist_id": pricelist_id,
+            "partner_invoice_id": partner_id,
+            "partner_shipping_id": partner_id,
         }])
 
         if not order_id:
             raise HTTPException(status_code=500, detail="Error al crear la cotización")
         # order_id = 102 # Esto es un ejemplo, deberías usar el ID real de la cotización creada
-        # 🔹 Crear líneas 
+        # 🔹 Crear líneas
         for line in data["order_lines"]:
             if line.get("type") == "note":
                 models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
                     "order_id": order_id,
-                    "name": line.get("description", ""),
+                    "name": (line.get("description") or ""),
                     "display_type": "line_note"
                 }])
             else:
+                # Obtener UoM real del producto para evitar errores por product_uom fijo
+                product_id = line.get("product_id")
+                if product_id is None:
+                    raise HTTPException(status_code=400, detail="Línea de producto sin product_id")
+                product = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
+                    [[["id", "=", int(product_id)]]],
+                    {"fields": ["id", "uom_id"], "limit": 1}
+                )
+                if not product:
+                    raise HTTPException(status_code=404, detail=f"Producto con ID {product_id} no encontrado")
+                product_uom = product[0]["uom_id"][0] if product[0].get("uom_id") else 1
+
                 models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
                     "order_id": order_id,
-                    "product_id": line["product_id"],
-                    "name": line["description"],
-                    "product_uom_qty": line["quantity"],
-                    "price_unit": line["price_unit"],
-                    "product_uom": 1
+                    "product_id": int(product_id),
+                    "name": (line.get("description") or ""),
+                    "product_uom_qty": float(line.get("quantity") or 0),
+                    "price_unit": float(line.get("price_unit") or 0),
+                    "product_uom": product_uom
                 }])
         # 🔹 Leer totales de una cotizacion
-        
+
         order_data = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "sale.order", "search_read",
             [[["id", "=", order_id]]],
             {"fields": ["amount_untaxed", "amount_total", "amount_tax"]}
         )
-        
+
         data["subtotal"] = order_data[0]["amount_untaxed"]
         data["total"] = order_data[0]["amount_total"]
         data["taxes"] = order_data[0]["amount_tax"]
-        
+
         return {
             "status": "success",
             "message": "Cotización creada con éxito con líneas personalizadas",
@@ -671,7 +711,7 @@ async def create_quotation_main(data: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.post("/create-quotation-products/")
 async def create_quotation_products(data: dict):
     try:
@@ -689,37 +729,51 @@ async def create_quotation_products(data: dict):
 
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
+        # Valores seguros para evitar enviar None por XML-RPC
+        partner_id = int(data.get("partner_id") or 1)
+        pricelist_id = int(data.get("pricelist_id") or 1)
+
         # 🔹 Crear la cotización en `sale.order`
         order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
-            "partner_id": data["partner_id"],
-            "pricelist_id": data["pricelist_id"],
+            "partner_id": partner_id,
+            "pricelist_id": pricelist_id,
         }])
 
         if not order_id:
             raise HTTPException(status_code=500, detail="Error al crear la cotización en Odoo")
 
-        # 🔹 Agregar líneas de productos
+        # 🔹 Agregar líneas de productos / notas
         for line in data["order_lines"]:
-            product = models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
-                [[["id", "=", line["product_id"]]]],
-                {"fields": ["id", "name", "uom_id"]}
-            )
+            if line.get("type") == "note":
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "name": (line.get("description") or ""),
+                    "display_type": "line_note"
+                }])
+            else:
+                product_id = line.get("product_id")
+                if product_id is None:
+                    raise HTTPException(status_code=400, detail="Línea de producto sin product_id")
+                product = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
+                    [[["id", "=", int(product_id)]]],
+                    {"fields": ["id", "name", "uom_id"]}
+                )
 
-            if not product:
-                raise HTTPException(status_code=404, detail=f"Producto con ID {line['product_id']} no encontrado")
+                if not product:
+                    raise HTTPException(status_code=404, detail=f"Producto con ID {product_id} no encontrado")
 
-            product_name = product[0]["name"]
-            product_uom = product[0]["uom_id"][0]
+                product_name = product[0]["name"]
+                product_uom = product[0]["uom_id"][0]
 
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
-                "order_id": order_id,
-                "product_id": line["product_id"],
-                "name": product_name,
-                "product_uom_qty": line["quantity"],
-                "product_uom": product_uom,
-                "price_unit": line["price_unit"],
-            }])
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "product_id": int(product_id),
+                    "name": (product_name or ""),
+                    "product_uom_qty": float(line.get("quantity") or 0),
+                    "product_uom": product_uom,
+                    "price_unit": float(line.get("price_unit") or 0),
+                }])
 
         return {
             "status": "success",
@@ -729,7 +783,7 @@ async def create_quotation_products(data: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 @app.get("/generate-quotation-pdf/{order_id}")
 async def generate_quotation_pdf(order_id: int):
     try:
@@ -806,13 +860,30 @@ async def create_contact(contact: dict):
                 "partner_id": existing[0]["id"]
             }
 
-        # 🔹 Crear el nuevo contacto
+        # 🔹 Buscar término de pago "Pago inmediato" (fallback a inglés)
+        immediate_payment_term = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+            [[[["name", "ilike", "Pago inmediato"]]]],
+            {"limit": 1}
+        )
+        if not immediate_payment_term:
+            immediate_payment_term = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+                [[[["name", "ilike", "Immediate Payment"]]]],
+                {"limit": 1}
+            )
+
+        # 🔹 Crear el nuevo contacto (incluyendo término de pago si se encontró)
+        partner_vals = {
+            'name': contact["name"],
+            'email': contact["email"],
+        }
+        if immediate_payment_term:
+            partner_vals['property_payment_term_id'] = immediate_payment_term[0]
+
         partner_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, 'res.partner', 'create',
-            [{
-                'name': contact["name"],
-                'email': contact["email"],
-            }]
+            [partner_vals]
         )
 
         # return para el caso de nuevo registro
@@ -875,7 +946,7 @@ async def get_active_sellable_products():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 class RegisterData(BaseModel):
     name: str
     user_id: EmailStr
@@ -903,18 +974,36 @@ async def register_user(data: RegisterData):
             [[["email", "=", data.user_id]]],
             {"fields": ["id", "email"], "limit": 1}
         )
-        
+
         if existing_contacts:
             raise HTTPException(status_code=409, detail="El usuario ya existe")
 
-        # 🧑 Crear contacto
+        # Buscar el término de pago "Pago inmediato" en Odoo
+        immediate_payment_term = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+            [[["name", "ilike", "Pago inmediato"]]],
+            {"limit": 1}
+        )
+        # Fallback: buscar "Immediate Payment" (Odoo en inglés)
+        if not immediate_payment_term:
+            immediate_payment_term = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+                [[["name", "ilike", "Immediate Payment"]]],
+                {"limit": 1}
+            )
+
+        # Crear contacto con término de pago inmediato
+        partner_vals = {
+            "name": data.name,
+            "email": data.user_id,
+            "customer_rank": 1
+        }
+        if immediate_payment_term:
+            partner_vals["property_payment_term_id"] = immediate_payment_term[0]
+
         partner_id = models.execute_kw(
             ODOO_DB, uid, ODOO_PASS, "res.partner", "create",
-            [{
-                "name": data.name,
-                "email": data.user_id,
-                "customer_rank": 1  # Se marca como cliente
-            }]
+            [partner_vals]
         )
 
         # 👤 Crear usuario en Odoo
@@ -962,7 +1051,7 @@ async def update_quotation_main(data: dict):
         "order_lines": [ ... ],  # igual que en create_quotation_1
     }
     """
-    
+
     try:
         ODOO_URL = os.getenv("ODOO_URL")
         ODOO_DB = os.getenv("ODOO_DB")
@@ -996,10 +1085,23 @@ async def update_quotation_main(data: dict):
             if line.get("type") == "note":
                 models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
                     "order_id": order_id,
-                    "name": line.get("description", ""),
+                    "name": (line.get("description") or ""),
                     "display_type": "line_note"
                 }])
             else:
+                # Obtener UoM real del producto para evitar errores por product_uom fijo
+                product_id = line.get("product_id")
+                if product_id is None:
+                    raise HTTPException(status_code=400, detail="Línea de producto sin product_id")
+                product = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
+                    [[["id", "=", int(product_id)]]],
+                    {"fields": ["id", "uom_id"], "limit": 1}
+                )
+                if not product:
+                    raise HTTPException(status_code=404, detail=f"Producto con ID {product_id} no encontrado")
+                product_uom = product[0]["uom_id"][0] if product[0].get("uom_id") else 1
+
                 # Buscar el impuesto del 16% en Odoo (solo una vez)
                 tax_ids = models.execute_kw(
                     ODOO_DB, uid, ODOO_PASS, "account.tax", "search",
@@ -1008,11 +1110,11 @@ async def update_quotation_main(data: dict):
                 )
                 models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
                     "order_id": order_id,
-                    "product_id": line["product_id"],
-                    "name": line["description"],
-                    "product_uom_qty": line["quantity"],
-                    "price_unit": line["price_unit"],
-                    "product_uom": 1,
+                    "product_id": int(product_id),
+                    "name": (line.get("description") or ""),
+                    "product_uom_qty": float(line.get("quantity") or 0),
+                    "price_unit": float(line.get("price_unit") or 0),
+                    "product_uom": product_uom,
                     "tax_id": [[6, 0, tax_ids]] if tax_ids else []
                 }])
 
@@ -1062,28 +1164,38 @@ async def update_quotation_products(data: dict):
                     [[lid]]
                 )
 
-        # 3. Crear nuevas líneas de productos (igual que en create_quotation_products)
+        # 3. Crear nuevas líneas de productos / notas (igual que en create_quotation_products)
         for line in data["order_lines"]:
-            product = models.execute_kw(
-                ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
-                [[["id", "=", line["product_id"]]]],
-                {"fields": ["id", "name", "uom_id"]}
-            )
+            if line.get("type") == "note":
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "name": (line.get("description") or ""),
+                    "display_type": "line_note"
+                }])
+            else:
+                product_id = line.get("product_id")
+                if product_id is None:
+                    raise HTTPException(status_code=400, detail="Línea de producto sin product_id")
+                product = models.execute_kw(
+                    ODOO_DB, uid, ODOO_PASS, "product.product", "search_read",
+                    [[["id", "=", int(product_id)]]],
+                    {"fields": ["id", "name", "uom_id"]}
+                )
 
-            if not product:
-                raise HTTPException(status_code=404, detail=f"Producto con ID {line['product_id']} no encontrado")
+                if not product:
+                    raise HTTPException(status_code=404, detail=f"Producto con ID {product_id} no encontrado")
 
-            product_name = product[0]["name"]
-            product_uom = product[0]["uom_id"][0]
+                product_name = product[0]["name"]
+                product_uom = product[0]["uom_id"][0]
 
-            models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
-                "order_id": order_id,
-                "product_id": line["product_id"],
-                "name": product_name,
-                "product_uom_qty": line["quantity"],
-                "product_uom": product_uom,
-                "price_unit": line["price_unit"],
-            }])
+                models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order.line", "create", [{
+                    "order_id": order_id,
+                    "product_id": int(product_id),
+                    "name": (product_name or ""),
+                    "product_uom_qty": float(line.get("quantity") or 0),
+                    "product_uom": product_uom,
+                    "price_unit": float(line.get("price_unit") or 0),
+                }])
 
         return {
             "status": "success",
@@ -1106,7 +1218,7 @@ async def get_products_by_category(data: dict):
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
-        IMAGE_PATH = os.getenv("CATEG_IMAGE_PATH", "./images/") # Ruta para guardar imágenes de productos = 
+        IMAGE_PATH = os.getenv("CATEG_IMAGE_PATH", "./images/") # Ruta para guardar imágenes de productos =
 
         common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
         uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
@@ -1234,7 +1346,7 @@ async def get_products_by_category(data: dict):
         result = []
 
         for product in products:
-            
+
 
             # Construir lista de atributos para este template
             attributes = []
@@ -1265,7 +1377,7 @@ async def get_products_by_category(data: dict):
                     "price": variant_prices.get(var_id, product["list_price"]),
                     "attributes": attributes
                 })
-                
+
                 # Guardar imagen con el ID de la variante
                 image_name = f"{var_id}.png"
                 image_path = os.path.join(IMAGE_PATH, image_name)
@@ -1282,7 +1394,7 @@ async def get_products_by_category(data: dict):
                     "price": product["list_price"],
                     "attributes": attributes
                 })
-                
+
                 # Guardar imagen con el ID del template
                 image_name = f"{product['id']}.png"
                 image_path = os.path.join(IMAGE_PATH, image_name)
