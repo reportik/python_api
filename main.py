@@ -24,6 +24,22 @@ app.add_middleware(
     allow_headers=["*"],  # Encabezados permitidos
 )
 
+def get_odoo_url() -> str:
+    """
+    Normaliza ODOO_URL para evitar errores de protocolo XML-RPC.
+    Acepta valores con/sin comillas, con \\x3a y con/sin esquema.
+    """
+    raw_url = (os.getenv("ODOO_URL") or "").strip().strip('"').strip("'")
+    raw_url = raw_url.replace("\\x3a", ":")
+
+    if not raw_url:
+        raise HTTPException(status_code=500, detail="ODOO_URL no está configurado")
+
+    if not raw_url.startswith(("http://", "https://")):
+        raw_url = f"https://{raw_url}"
+
+    return raw_url.rstrip("/")
+
 # Modelo para recibir datos en solicitudes POST
 class Item(BaseModel):
     name: str
@@ -54,7 +70,7 @@ async def get_odoo_product_prices(data: dict):
         if not ids or not isinstance(ids, list):
             raise HTTPException(status_code=400, detail="Debes enviar un array de ids en 'ids'.")
 
-        url = os.getenv('ODOO_URL').replace("\\x3a", ":")
+        url = get_odoo_url()
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
@@ -127,7 +143,7 @@ def read_item(item_name: str):
     #obtener datos de un item por su nombre de product.product y de product.template
     try:
         # Obtener variables de entorno
-        url = os.getenv('ODOO_URL').replace("\\x3a", ":")
+        url = get_odoo_url()
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
@@ -328,7 +344,7 @@ async def auth(data: AuthRequest):
 
     try:
         #  Obtener variables de entorno
-        url = os.getenv('ODOO_URL')
+        url = get_odoo_url()
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
@@ -485,7 +501,7 @@ async def get_image(id: int):
 async def get_product_price(product_id: int, pricelist_id: int):
     try:
         #  Obtener variables de entorno
-        url = os.getenv('ODOO_URL')
+        url = get_odoo_url()
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
@@ -571,7 +587,7 @@ def save_image_to_disk(image_base64: str, id: int, tipo: str) -> str:
 async def update_odoo_product_ids():
     try:
         #  Conectar a Odoo
-        url = os.getenv('ODOO_URL')
+        url = get_odoo_url()
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
@@ -630,7 +646,7 @@ async def update_odoo_product_ids():
 async def create_quotation_main(data: dict):
     try:
         # 🔹 Variables de entorno
-        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -647,13 +663,30 @@ async def create_quotation_main(data: dict):
         partner_id = int(data.get("partner_id") or 1)
         pricelist_id = int(data.get("pricelist_id") or 1)
 
-        #🔹 Crear la cotización
-        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+        # 🔹 Buscar término de pago "Pago inmediato" (fallback en inglés)
+        immediate_payment_term = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+            [[["name", "ilike", "Pago inmediato"]]],
+            {"limit": 1}
+        )
+        if not immediate_payment_term:
+            immediate_payment_term = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+                [[["name", "ilike", "Immediate Payment"]]],
+                {"limit": 1}
+            )
+
+        order_vals = {
             "partner_id": partner_id,
             "pricelist_id": pricelist_id,
             "partner_invoice_id": partner_id,
             "partner_shipping_id": partner_id,
-        }])
+        }
+        if immediate_payment_term:
+            order_vals["payment_term_id"] = immediate_payment_term[0]
+
+        #🔹 Crear la cotización
+        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [order_vals])
 
         if not order_id:
             raise HTTPException(status_code=500, detail="Error al crear la cotización")
@@ -716,7 +749,7 @@ async def create_quotation_main(data: dict):
 async def create_quotation_products(data: dict):
     try:
         # 🔹 Variables de entorno
-        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -733,11 +766,28 @@ async def create_quotation_products(data: dict):
         partner_id = int(data.get("partner_id") or 1)
         pricelist_id = int(data.get("pricelist_id") or 1)
 
-        # 🔹 Crear la cotización en `sale.order`
-        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [{
+        # 🔹 Buscar término de pago "Pago inmediato" (fallback en inglés)
+        immediate_payment_term = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+            [[["name", "ilike", "Pago inmediato"]]],
+            {"limit": 1}
+        )
+        if not immediate_payment_term:
+            immediate_payment_term = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+                [[["name", "ilike", "Immediate Payment"]]],
+                {"limit": 1}
+            )
+
+        order_vals = {
             "partner_id": partner_id,
             "pricelist_id": pricelist_id,
-        }])
+        }
+        if immediate_payment_term:
+            order_vals["payment_term_id"] = immediate_payment_term[0]
+
+        # 🔹 Crear la cotización en `sale.order`
+        order_id = models.execute_kw(ODOO_DB, uid, ODOO_PASS, "sale.order", "create", [order_vals])
 
         if not order_id:
             raise HTTPException(status_code=500, detail="Error al crear la cotización en Odoo")
@@ -787,7 +837,7 @@ async def create_quotation_products(data: dict):
 @app.get("/generate-quotation-pdf/{order_id}")
 async def generate_quotation_pdf(order_id: int):
     try:
-        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -828,11 +878,79 @@ async def generate_quotation_pdf(order_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _get_quotation_status_from_odoo(order_id: int):
+    ODOO_URL = get_odoo_url()
+    ODOO_DB = os.getenv("ODOO_DB")
+    ODOO_USER = os.getenv("ADMIN_USER")
+    ODOO_PASS = os.getenv("ADMIN_PASS")
+
+    common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+    uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+    if not uid:
+        raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+    models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+    order_data = models.execute_kw(
+        ODOO_DB,
+        uid,
+        ODOO_PASS,
+        "sale.order",
+        "search_read",
+        [[["id", "=", int(order_id)]]],
+        {"fields": ["id", "name", "state"], "limit": 1},
+    )
+
+    if not order_data:
+        raise HTTPException(status_code=404, detail=f"No existe la cotización {order_id} en Odoo")
+
+    state = (order_data[0].get("state") or "").lower()
+    label_map = {
+        "draft": "en_revision",
+        "sent": "enviada",
+        "sale": "orden_venta",
+        "cancel": "cancelada",
+    }
+
+    return {
+        "order_id": int(order_data[0]["id"]),
+        "name": order_data[0].get("name"),
+        "state": state,
+        "status": label_map.get(state, "en_revision"),
+    }
+
+@app.get("/quotation-status/{order_id}")
+async def get_quotation_status(order_id: int):
+    try:
+        return _get_quotation_status_from_odoo(order_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/quotation-status")
+async def post_quotation_status(data: dict):
+    """
+    Compatibilidad para clientes que envían JSON:
+    {
+      "order_id": 123
+    }
+    """
+    try:
+        order_id = data.get("order_id")
+        if order_id is None:
+            raise HTTPException(status_code=400, detail="Debes enviar 'order_id'")
+
+        return _get_quotation_status_from_odoo(int(order_id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/create-contact/")
 async def create_contact(contact: dict):
     try:
         # 🔹 Variables de entorno
-        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -899,7 +1017,7 @@ async def create_contact(contact: dict):
 @app.get("/products/active/sellable")
 async def get_active_sellable_products():
     try:
-        url = os.getenv('ODOO_URL').replace("\\x3a", ":")
+        url = get_odoo_url()
         db = os.getenv('ODOO_DB')
         admin_username = os.getenv('ADMIN_USER')
         admin_password = os.getenv('ADMIN_PASS')
@@ -956,7 +1074,7 @@ class RegisterData(BaseModel):
 async def register_user(data: RegisterData):
     try:
         # 🔹 Configuración de conexión Odoo
-        ODOO_URL = os.getenv("ODOO_URL").replace("\\x3a", ":")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -1053,7 +1171,7 @@ async def update_quotation_main(data: dict):
     """
 
     try:
-        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -1066,6 +1184,24 @@ async def update_quotation_main(data: dict):
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
         order_id = data["order_id"]
+
+        # Forzar término de pago "Pago inmediato" en cada actualización
+        immediate_payment_term = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+            [[["name", "ilike", "Pago inmediato"]]],
+            {"limit": 1}
+        )
+        if not immediate_payment_term:
+            immediate_payment_term = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+                [[["name", "ilike", "Immediate Payment"]]],
+                {"limit": 1}
+            )
+        if immediate_payment_term:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "sale.order", "write",
+                [[int(order_id)], {"payment_term_id": immediate_payment_term[0]}]
+            )
 
         # 1. Buscar todas las líneas actuales de la cotización
         line_ids = models.execute_kw(
@@ -1137,7 +1273,7 @@ async def update_quotation_products(data: dict):
     }
     """
     try:
-        ODOO_URL = os.getenv("ODOO_URL")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
@@ -1150,6 +1286,24 @@ async def update_quotation_products(data: dict):
         models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
 
         order_id = data["order_id"]
+
+        # Forzar término de pago "Pago inmediato" en cada actualización
+        immediate_payment_term = models.execute_kw(
+            ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+            [[["name", "ilike", "Pago inmediato"]]],
+            {"limit": 1}
+        )
+        if not immediate_payment_term:
+            immediate_payment_term = models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "account.payment.term", "search",
+                [[["name", "ilike", "Immediate Payment"]]],
+                {"limit": 1}
+            )
+        if immediate_payment_term:
+            models.execute_kw(
+                ODOO_DB, uid, ODOO_PASS, "sale.order", "write",
+                [[int(order_id)], {"payment_term_id": immediate_payment_term[0]}]
+            )
 
         # 1. Buscar todas las líneas actuales de la cotización
         line_ids = models.execute_kw(
@@ -1214,7 +1368,7 @@ async def get_products_by_category(data: dict):
     Guarda la imagen en disco solo si no existe.
     """
     try:
-        ODOO_URL = os.getenv("ODOO_URL").replace("\\x3a", ":")
+        ODOO_URL = get_odoo_url()
         ODOO_DB = os.getenv("ODOO_DB")
         ODOO_USER = os.getenv("ADMIN_USER")
         ODOO_PASS = os.getenv("ADMIN_PASS")
