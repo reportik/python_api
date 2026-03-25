@@ -433,13 +433,27 @@ class AutologinTokenRequest(BaseModel):
     login: str
 
 
+def _normalize_odoo_public_base_url(raw: str) -> str:
+    """
+    URL pública de Odoo para enlaces del navegador (autologin).
+    Sin esquema, el cliente interpreta el host como ruta relativa y rompe el redirect.
+    """
+    if not raw:
+        return ""
+    u = raw.strip().strip('"').strip("'")
+    u = u.replace("\\x3a", ":")
+    if not u.startswith(("http://", "https://")):
+        u = "https://" + u.lstrip("/")
+    return u.rstrip("/")
+
+
 @app.post("/autologin-token")
 async def autologin_token(data: AutologinTokenRequest):
     """
     Genera un token JWT para redirigir al usuario a Odoo sin volver a iniciar sesión.
     Laravel llama a este endpoint con el login (email) del usuario.
     """
-    odoo_base_url = (os.getenv("ODOO_BASE_URL") or "").rstrip("/")
+    odoo_base_url = _normalize_odoo_public_base_url(os.getenv("ODOO_BASE_URL") or "")
     if not odoo_base_url:
         raise HTTPException(
             status_code=500,
@@ -941,6 +955,62 @@ async def post_quotation_status(data: dict):
             raise HTTPException(status_code=400, detail="Debes enviar 'order_id'")
 
         return _get_quotation_status_from_odoo(int(order_id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/sale-orders-by-partner")
+async def sale_orders_by_partner(data: dict):
+    """
+    Recibe:
+    {
+      "partner_id": int,
+      "order_ids": [int, int, ...]
+    }
+    Devuelve:
+    { "matching_order_ids": [int, ...] }
+    """
+    try:
+        partner_id = data.get("partner_id")
+        order_ids = data.get("order_ids", [])
+
+        if partner_id is None:
+            raise HTTPException(status_code=400, detail="Debes enviar 'partner_id'")
+
+        partner_id = int(partner_id)
+
+        if not isinstance(order_ids, list):
+            raise HTTPException(status_code=400, detail="'order_ids' debe ser una lista")
+
+        order_ids_int = [int(x) for x in order_ids if x is not None]
+        if not order_ids_int:
+            return {"matching_order_ids": []}
+
+        ODOO_URL = get_odoo_url()
+        ODOO_DB = os.getenv("ODOO_DB")
+        ODOO_USER = os.getenv("ADMIN_USER")
+        ODOO_PASS = os.getenv("ADMIN_PASS")
+
+        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_PASS, {})
+        if not uid:
+            raise HTTPException(status_code=401, detail="Error de autenticación en Odoo")
+
+        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+        # sale.order.partner_id es Many2one: el dominio usa igualdad contra el id del partner
+        matching_ids = models.execute_kw(
+            ODOO_DB,
+            uid,
+            ODOO_PASS,
+            "sale.order",
+            "search",
+            [[["id", "in", order_ids_int], ["partner_id", "=", partner_id]]],
+        )
+
+        matching_ids_int = [int(x) for x in matching_ids]
+        return {"matching_order_ids": matching_ids_int}
     except HTTPException:
         raise
     except Exception as e:
