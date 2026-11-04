@@ -1632,8 +1632,8 @@ async def get_products_by_category(data: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 class ProspectoCreate(BaseModel):
-    nombre_cliente: str
-    contacto: str
+    Name: str
+    Email: str
     tipo_proyecto: str
     servicio: str
     espacios_descripcion: str | None = None
@@ -1647,14 +1647,14 @@ def crear_prospecto(prospecto: ProspectoCreate):
         cursor = conn.cursor()
         
         query = """
-            INSERT INTO prospectos_iteknia 
-            (nombre_cliente, contacto, tipo_proyecto, servicio, espacios_descripcion, ubicacion, etapa)
+            INSERT INTO RPT_PROSPECTOS 
+            (PRO_nombre_cliente, PRO_contacto, PRO_tipo_proyecto, PRO_servicio, PRO_espacios_descripcion, PRO_ubicacion, PRO_etapa)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """
         
         cursor.execute(query, (
-            prospecto.nombre_cliente,
-            prospecto.contacto,
+            prospecto.Name,          # Viene de la variable Name de Typebot
+            prospecto.Email,         # Viene de la variable Email de Typebot
             prospecto.tipo_proyecto,
             prospecto.servicio,
             prospecto.espacios_descripcion,
