@@ -1630,3 +1630,43 @@ async def get_products_by_category(data: dict):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class ProspectoCreate(BaseModel):
+    nombre_cliente: str
+    contacto: str
+    tipo_proyecto: str
+    servicio: str
+    espacios_descripcion: str | None = None
+    ubicacion: str
+    etapa: str
+
+@app.post("/api/prospectos")
+def crear_prospecto(prospecto: ProspectoCreate):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        query = """
+            INSERT INTO prospectos_iteknia 
+            (nombre_cliente, contacto, tipo_proyecto, servicio, espacios_descripcion, ubicacion, etapa)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        
+        cursor.execute(query, (
+            prospecto.nombre_cliente,
+            prospecto.contacto,
+            prospecto.tipo_proyecto,
+            prospecto.servicio,
+            prospecto.espacios_descripcion,
+            prospecto.ubicacion,
+            prospecto.etapa
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return {"status": "success", "message": "Prospecto guardado exitosamente en la base de datos"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
