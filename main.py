@@ -1634,6 +1634,7 @@ async def get_products_by_category(data: dict):
 class ProspectoCreate(BaseModel):
     Name: str
     Email: str
+    proyecto_descripcion: str | None = None
     tipo_proyecto: str
     servicio: str
     espacios_descripcion: str | None = None
@@ -1648,13 +1649,13 @@ def crear_prospecto(prospecto: ProspectoCreate):
         
         query = """
             INSERT INTO RPT_PROSPECTOS 
-            (PRO_nombre_cliente, PRO_contacto, PRO_tipo_proyecto, PRO_servicio, PRO_espacios_descripcion, PRO_ubicacion, PRO_etapa)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (PRO_nombre_cliente, PRO_contacto, PRO_proyecto_descripcion, PRO_tipo_proyecto, PRO_servicio, PRO_espacios_descripcion, PRO_ubicacion, PRO_etapa)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """
-        
         cursor.execute(query, (
             prospecto.Name,          # Viene de la variable Name de Typebot
-            prospecto.Email,         # Viene de la variable Email de Typebot
+            prospecto.Email,        # Viene de la variable Email de Typebot
+            prospecto.proyecto_descripcion,
             prospecto.tipo_proyecto,
             prospecto.servicio,
             prospecto.espacios_descripcion,
