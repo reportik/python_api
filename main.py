@@ -27,7 +27,8 @@ app.add_middleware(
 
 # ... tu configuración actual de app y CORSMiddleware ...
 
-app.include_router(sat.router)  # <-- 2. Registrar las rutas /sat/*
+app.include_router(sat.router) 
+
 def get_odoo_url() -> str:
     """
     Normaliza ODOO_URL para evitar errores de protocolo XML-RPC.
