@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import xmlrpc.client
 from datetime import datetime, timedelta
 import jwt
+from routers import sat  # <-- 1. Importar el módulo aislado
 # Cargar las variables de entorno desde .env
 load_dotenv()
 import base64
@@ -24,6 +25,9 @@ app.add_middleware(
     allow_headers=["*"],  # Encabezados permitidos
 )
 
+# ... tu configuración actual de app y CORSMiddleware ...
+
+app.include_router(sat.router)  # <-- 2. Registrar las rutas /sat/*
 def get_odoo_url() -> str:
     """
     Normaliza ODOO_URL para evitar errores de protocolo XML-RPC.
