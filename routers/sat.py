@@ -11,11 +11,24 @@ router = APIRouter(
 
 SAT_BASE_DIR = Path("/var/www/sat-iteknia")
 SAT_DATA_DIR = SAT_BASE_DIR / "datos"
-SAT_API_KEY = os.getenv("SAT_API_KEY", "")
+ENV_PATH = Path("/var/www/html/python_api/.env")
+
+
+def _obtener_api_key() -> str:
+    clave = os.getenv("SAT_API_KEY", "").strip().strip('"').strip("'")
+    if clave:
+        return clave
+    if ENV_PATH.exists():
+        for linea in ENV_PATH.read_text(encoding="utf-8").splitlines():
+            linea = linea.strip()
+            if linea.startswith("SAT_API_KEY="):
+                return linea.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
 
 
 def verificar_api_key(x_api_key: str = Header(...)):
-    if not SAT_API_KEY or x_api_key != SAT_API_KEY:
+    clave_esperada = _obtener_api_key()
+    if not clave_esperada or x_api_key != clave_esperada:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="API Key inválida o no configurada"
