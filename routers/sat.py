@@ -24,11 +24,31 @@ def verificar_api_key(x_api_key: str = Header(...)):
 
 @router.get("/estado", dependencies=[Depends(verificar_api_key)])
 def obtener_estado():
-    """Devuelve el estado actual de todas las solicitudes registradas en estado.json."""
+    """Devuelve el estado de los últimos 3 periodos y cualquier flujo aún no concluido."""
     archivo_estado = SAT_DATA_DIR / "estado.json"
     if not archivo_estado.exists():
         raise HTTPException(status_code=404, detail="Aún no existe estado.json")
-    return json.loads(archivo_estado.read_text(encoding="utf-8"))
+
+    data = json.loads(archivo_estado.read_text(encoding="utf-8"))
+    flujos = data.get("flujos", {})
+
+    periodos = sorted({clave.split("/")[0] for clave in flujos}, reverse=True)
+    recientes = set(periodos[:3])
+
+    flujos_filtrados = {}
+    historico_listos = 0
+
+    for clave, info in flujos.items():
+        periodo = clave.split("/")[0]
+        if periodo in recientes or info.get("fase") != "listo":
+            flujos_filtrados[clave] = info
+        else:
+            historico_listos += 1
+
+    return {
+        "historico_flujos_listos": historico_listos,
+        "flujos": flujos_filtrados,
+    }
 
 
 @router.get("/reporte", dependencies=[Depends(verificar_api_key)])
