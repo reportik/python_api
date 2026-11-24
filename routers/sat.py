@@ -1,7 +1,10 @@
 import json
 import os
 import subprocess
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 
 router = APIRouter(
@@ -12,6 +15,7 @@ router = APIRouter(
 SAT_BASE_DIR = Path("/var/www/sat-iteknia")
 SAT_DATA_DIR = SAT_BASE_DIR / "datos"
 ENV_PATH = Path("/var/www/html/python_api/.env")
+_LOCK_SAT = threading.Lock()
 
 
 def _obtener_api_key() -> str:
@@ -66,7 +70,7 @@ def obtener_estado():
 
 @router.get("/reporte", dependencies=[Depends(verificar_api_key)])
 def obtener_reporte_diario():
-    """Devuelve el último reporte JSON de conciliación generado a las 08:00."""
+    """Devuelve el último reporte JSON de conciliación generado."""
     archivo_reporte = SAT_DATA_DIR / "reporte-marisol.json"
     if not archivo_reporte.exists():
         raise HTTPException(status_code=404, detail="Aún no se ha generado el reporte")
@@ -74,25 +78,61 @@ def obtener_reporte_diario():
 
 
 def _ejecutar_seguimiento_sat():
-    """Corre sat_cli.py seguir en su propio .venv sin tocar las dependencias de Odoo."""
-    env = os.environ.copy()
-    env["SAT_CERT_FILE"] = "/etc/sat-iteknia-credenciales/efirma.cer"
-    env["SAT_KEY_FILE"] = "/etc/sat-iteknia-credenciales/efirma.key"
-    env["SAT_PASSWORD_FILE"] = "/etc/sat-iteknia-credenciales/clave.txt"
+    """Descarga pendientes (seguir), extrae XML al NAS y actualiza el JSON de conciliación."""
+    if not _LOCK_SAT.acquire(blocking=False):
+        return
 
-    python_sat = SAT_BASE_DIR / ".venv" / "bin" / "python"
-    script_sat = SAT_BASE_DIR / "sat_cli.py"
+    try:
+        env = os.environ.copy()
+        env["SAT_CERT_FILE"] = "/etc/sat-iteknia-credenciales/efirma.cer"
+        env["SAT_KEY_FILE"] = "/etc/sat-iteknia-credenciales/efirma.key"
+        env["SAT_PASSWORD_FILE"] = "/etc/sat-iteknia-credenciales/clave.txt"
 
-    subprocess.run(
-        [str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR), "seguir"],
-        cwd=str(SAT_BASE_DIR),
-        env=env,
-        check=False
-    )
+        python_sat = SAT_BASE_DIR / ".venv" / "bin" / "python"
+        script_sat = SAT_BASE_DIR / "sat_cli.py"
+        script_extraer = SAT_BASE_DIR / "extraer_xml_nas.py"
+        archivo_reporte = SAT_DATA_DIR / "reporte-marisol.json"
+
+        ahora_mx = datetime.now(ZoneInfo("America/Mexico_City")).date()
+        hoy_fiscal = (ahora_mx - timedelta(days=4)).isoformat()
+        ayer_fiscal = (ahora_mx - timedelta(days=5)).isoformat()
+
+        # 1. Consultar pendientes y descargar ZIPs listos
+        subprocess.run(
+            [str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR), "seguir"],
+            cwd=str(SAT_BASE_DIR),
+            env=env,
+            check=False
+        )
+
+        # 2. Extraer XML descargados al NAS (lote de ayer y de hoy)
+        for fecha in (ayer_fiscal, hoy_fiscal):
+            subprocess.run(
+                [str(python_sat), str(script_extraer), "--fecha", fecha],
+                cwd=str(SAT_BASE_DIR),
+                env=env,
+                check=False
+            )
+
+        # 3. Regenerar reporte JSON de conciliación para el chatbot (sin enviar correo)
+        subprocess.run(
+            [
+                str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR),
+                "reporte", "--desde", hoy_fiscal, "--hasta", hoy_fiscal,
+                "--salida", str(archivo_reporte)
+            ],
+            cwd=str(SAT_BASE_DIR),
+            env=env,
+            check=False
+        )
+    finally:
+        _LOCK_SAT.release()
 
 
 @router.post("/seguir", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(verificar_api_key)])
 def disparar_seguimiento_manual(background_tasks: BackgroundTasks):
-    """Lanza la descarga de paquetes pendientes en segundo plano sin bloquear la API."""
+    """Lanza descarga, extracción al NAS y actualización de conciliación en segundo plano."""
+    if _LOCK_SAT.locked():
+        return {"mensaje": "Ya hay una descarga y actualización en curso en segundo plano"}
     background_tasks.add_task(_ejecutar_seguimiento_sat)
-    return {"mensaje": "Seguimiento del SAT iniciado en segundo plano"}
+    return {"mensaje": "Descarga, extracción al NAS y actualización de reporte iniciadas en segundo plano"}
