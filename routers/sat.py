@@ -78,7 +78,7 @@ def obtener_reporte_diario():
 
 
 def _ejecutar_seguimiento_sat():
-    """Descarga pendientes (seguir), extrae XML al NAS y actualiza el JSON de conciliación."""
+    """Recupera inciertos, reenvía solicitudes, descarga pendientes (seguir), extrae XML al NAS y actualiza conciliación."""
     if not _LOCK_SAT.acquire(blocking=False):
         return
 
@@ -91,13 +91,43 @@ def _ejecutar_seguimiento_sat():
         python_sat = SAT_BASE_DIR / ".venv" / "bin" / "python"
         script_sat = SAT_BASE_DIR / "sat_cli.py"
         script_extraer = SAT_BASE_DIR / "extraer_xml_nas.py"
+        archivo_estado = SAT_DATA_DIR / "estado.json"
         archivo_reporte = SAT_DATA_DIR / "reporte-marisol.json"
+
+        # 1. Detectar flujos en "incierto" (o ya marcados como "nuevo") para recuperarlos
+        fechas_reenvio = set()
+        if archivo_estado.exists():
+            estado_data = json.loads(archivo_estado.read_text(encoding="utf-8"))
+            for clave, info in estado_data.get("flujos", {}).items():
+                fase = info.get("fase")
+                if fase == "incierto":
+                    cmd_rec = [str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR), "recuperar"]
+                    if info.get("id"):
+                        cmd_rec.extend(["--id", info["id"], clave])
+                    else:
+                        cmd_rec.extend(["--autorizar-reenvio", clave])
+                        fechas_reenvio.add((info["inicio"], info["fin"]))
+                    subprocess.run(cmd_rec, cwd=str(SAT_BASE_DIR), env=env, check=False)
+                elif fase == "nuevo":
+                    fechas_reenvio.add((info["inicio"], info["fin"]))
+
+        # 2. Volver a solicitar al SAT los flujos que pasaron a fase "nuevo"
+        for inicio_f, fin_f in sorted(fechas_reenvio):
+            subprocess.run(
+                [
+                    str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR),
+                    "solicitar", "--desde", inicio_f, "--hasta", fin_f
+                ],
+                cwd=str(SAT_BASE_DIR),
+                env=env,
+                check=False
+            )
 
         ahora_mx = datetime.now(ZoneInfo("America/Mexico_City")).date()
         hoy_fiscal = (ahora_mx - timedelta(days=4)).isoformat()
         ayer_fiscal = (ahora_mx - timedelta(days=5)).isoformat()
 
-        # 1. Consultar pendientes y descargar ZIPs listos
+        # 3. Consultar pendientes y descargar ZIPs listos
         subprocess.run(
             [str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR), "seguir"],
             cwd=str(SAT_BASE_DIR),
@@ -105,8 +135,9 @@ def _ejecutar_seguimiento_sat():
             check=False
         )
 
-        # 2. Extraer XML descargados al NAS (lote de ayer y de hoy)
-        for fecha in (ayer_fiscal, hoy_fiscal):
+        # 4. Extraer XML descargados al NAS (ayer, hoy y cualquier fecha recuperada)
+        fechas_extraer = sorted({ayer_fiscal, hoy_fiscal} | {ini for ini, _ in fechas_reenvio})
+        for fecha in fechas_extraer:
             subprocess.run(
                 [str(python_sat), str(script_extraer), "--fecha", fecha],
                 cwd=str(SAT_BASE_DIR),
@@ -114,7 +145,7 @@ def _ejecutar_seguimiento_sat():
                 check=False
             )
 
-        # 3. Regenerar reporte JSON de conciliación para el chatbot (sin enviar correo)
+        # 5. Regenerar reporte JSON de conciliación para el chatbot (sin enviar correo)
         subprocess.run(
             [
                 str(python_sat), str(script_sat), "--datos", str(SAT_DATA_DIR),
